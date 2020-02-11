@@ -2,29 +2,29 @@ package mimir.caveats
 
 import org.specs2.mutable.Specification
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.Dataset
 
-class ExpressionSpec extends Specification
+class ExpressionSpec extends Specification 
 {
 
   lazy val spark = 
     SparkSession.builder
       .appName("Mimir-Caveat-Test")
       .master("local[*]")
-      // .config("spark.sql.catalogImplementation", "hive")
-      // .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-      // .config("spark.driver.extraJavaOptions", s"-Dderby.system.home=$dataDir")
-      // .config("spark.sql.warehouse.dir", s"${new File(dataDir).getAbsolutePath}/spark-warehouse")
-      // .config("spark.hadoop.javax.jdo.option.ConnectionURL", s"jdbc:derby:;databaseName=${new File(dataDir).getAbsolutePath}/metastore_db;create=true")
-      // .registerKryoClasses(SparkUtils.getSparkKryoClasses())
-      // .set("spark.kryo.registrator",classOf[GeoSparkKryoRegistrator].getName)
       .getOrCreate()
-  lazy val testData = spark.read.csv("test_data/r.csv")
+  lazy val testData = 
+    spark.read
+         .format("csv")
+         .option("header", "true")
+         .load("test_data/r.csv")
 
   "Spark" >> {
 
     "count the lines" >> {
+      import spark.implicits._
 
-      testData.count() must be equalTo(7)
+      val temp = testData.select($"A", $"B"+1)
+      Caveats.annotate(temp) must beAnInstanceOf[Dataset[_]]
 
     }
 
