@@ -22,7 +22,7 @@ object AnnotatePlan
    */
   def apply(plan: LogicalPlan): LogicalPlan =
   {
-    def NO_CAVEAT_INTERACTIONS = plan.mapChildren { apply(_) }
+    def PASS_THROUGH_CAVEATS = plan.mapChildren { apply(_) }
 
     // Each operator has its own interactions with caveats.  Force an explicit
     // matching rather than using Spark's tree recursion operators and default 
@@ -38,7 +38,7 @@ object AnnotatePlan
           A node automatically inserted at the top of query plans to allow
           pattern-matching rules to insert top-only operators.  
         */
-        NO_CAVEAT_INTERACTIONS
+        PASS_THROUGH_CAVEATS
       }
       case _:Subquery =>
       {
@@ -46,7 +46,7 @@ object AnnotatePlan
           A node automatically inserted at the top of subquery plans to 
           allow for subquery-specific optimizatiosn.  
         */
-        NO_CAVEAT_INTERACTIONS
+        PASS_THROUGH_CAVEATS
       }
       case Project(projectList: Seq[NamedExpression], child: LogicalPlan) => 
       {
