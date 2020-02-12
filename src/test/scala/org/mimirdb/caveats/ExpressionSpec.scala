@@ -1,17 +1,17 @@
-package mimir.caveats
+package org.mimirdb.caveats
 
 import org.specs2.mutable.Specification
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.functions.{ col, lit, when }
-import org.apache.spark.sql.catalyst.plans.logical.Project
 import org.specs2.matcher.Matcher
+
+import org.apache.spark.sql.{ SparkSession, DataFrame, Column }
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical.Project
+import org.apache.spark.sql.functions.{ col, lit, when }
 import org.apache.spark.sql.types._
 
-
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.mimirdb.caveats.implicits._
 
 class ExpressionSpec extends Specification 
 {
@@ -33,6 +33,17 @@ class ExpressionSpec extends Specification
       .analyzed
       .asInstanceOf[Project]
       .projectList(0)
+
+  def row(fields:(Column, Boolean)*) = {
+    val emptyRow = InternalRow()
+    InternalRow.fromSeq(
+      fields.map { _._1.expr.eval(emptyRow) } :+
+      InternalRow(
+        false,
+        InternalRow(fields.map { _._2 })
+      )
+    )
+  }
 
   def attr(e: String, df: DataFrame = testData): Attribute =
     resolve(col(e), df).asInstanceOf[Attribute]
@@ -89,6 +100,14 @@ class ExpressionSpec extends Specification
       annotate($"A") must beEquivalentTo(attrAnnotation("A"))
     }
 
+    "handle simple annotation with caveats" >> {
+      import spark.implicits._
+
+      annotate(
+        $"A".caveat("a possible error")
+      ) must beEquivalentTo(Literal(true))
+    }
+
     "handle when clauses" >> {
       import spark.implicits._
 
@@ -110,6 +129,17 @@ class ExpressionSpec extends Specification
             attrAnnotation("B") -> Literal(true),
             EqualTo(cast(attr("B"), IntegerType), Literal(0)) -> attrAnnotation("A")
           ), Literal(false)
+        )
+      )
+
+      annotate( 
+        when($"B" === 0, $"A")
+          .otherwise(lit(1).caveat("an error")) 
+      ) must beEquivalentTo(
+        CaseWhen(Seq(
+            attrAnnotation("B") -> Literal(true),
+            EqualTo(cast(attr("B"), IntegerType), Literal(0)) -> attrAnnotation("A")
+          ), Literal(true)
         )
       )
     }

@@ -1,4 +1,4 @@
-package mimir.caveats
+package org.mimirdb.caveats
 
 import org.apache.spark.sql.catalyst.expressions._
 import com.typesafe.scalalogging.LazyLogging
@@ -39,8 +39,13 @@ object AnnotateExpression
     // an input attribute has a caveat.
     expr match {
 
+      // The caveat expression (obviously) is always caveated
+      case caveat: Caveat => Literal(true)
+
+      // Attributes are caveatted if they are caveated in the input.
       case a: Attribute => Caveats.attributeAnnotationExpression(a)
-      
+
+      // Not entirely sure how to go about handling subqueries yet
       case sq: SubqueryExpression => throw new AnnotationException("Can't handle subqueries yet", expr)
       
       case If(predicate, thenClause, elseClause) => 

@@ -1,4 +1,4 @@
-package mimir.caveats
+package org.mimirdb.caveats
 
 import com.typesafe.scalalogging.LazyLogging
 
