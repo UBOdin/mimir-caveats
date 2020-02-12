@@ -12,9 +12,6 @@ import com.typesafe.scalalogging.LazyLogging
 object AnnotatePlan
   extends LazyLogging
 {
-  val ANNOTATION_COLUMN = "MIMIR_CAVEATS"
-  val ROW               = "ROW"
-  val COLUMNS           = "COLUMN"
 
   /** 
    * Return a logical plan identical to the input plan, but with an additional 
@@ -62,7 +59,7 @@ object AnnotatePlan
           buildAnnotation(
             rewrittenChild, 
             colAnnotations = 
-              projectList.map { x => AnnotateExpression(x) }
+              projectList.map { AnnotateExpression.preserveName(_) }
           )
         Project(
           projectList :+ annotation,
@@ -235,33 +232,23 @@ object AnnotatePlan
   {
     val columns = plan.output.map { _.name }
 
-    assert(columns.exists { _.equals(ANNOTATION_COLUMN) })
+    assert(columns.exists { _.equals(Caveats.ANNOTATION_COLUMN) })
 
     val realRowAnnotation: Expression =
       Option(rowAnnotation)
-        .getOrElse {  
-          UnresolvedExtractValue(
-            UnresolvedAttribute(ANNOTATION_COLUMN),
-            Literal(ROW)
-          )
-        }
+        .getOrElse { Caveats.rowAnnotationExpression }
 
     val realColAnnotations: Expression =
       Option(colAnnotations)
         .map { CreateStruct(_) }
-        .getOrElse {
-          UnresolvedExtractValue(
-            UnresolvedAttribute(ANNOTATION_COLUMN),
-            Literal(COLUMNS)
-          )
-        }
+        .getOrElse { Caveats.allAttributeAnnotationsExpression }
 
     Alias(
       CreateStruct(Seq(
-        Alias(realRowAnnotation, ROW)(),
-        Alias(realColAnnotations, COLUMNS)()
+        Alias(realRowAnnotation, Caveats.ROW_ANNOTATION)(),
+        Alias(realColAnnotations, Caveats.COLUMN_ANNOTATION)()
       )),
-      ANNOTATION_COLUMN
+      Caveats.ANNOTATION_COLUMN
     )()
   }
 }
