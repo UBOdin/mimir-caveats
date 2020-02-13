@@ -26,8 +26,6 @@ object AnnotatePlan
     // to fail-stop operation to make sure that new operators or non-standard
     // behaviors get surfaced early.
 
-    logger.trace("HI")
-
     val ret = plan match {
       case _:ReturnAnswer => 
       {
@@ -59,7 +57,7 @@ object AnnotatePlan
           buildAnnotation(
             rewrittenChild, 
             colAnnotations = 
-              projectList.map { AnnotateExpression.preserveName(_) }
+              projectList.map { e => e.name -> AnnotateExpression(e) }
           )
         Project(
           projectList :+ annotation,
@@ -217,22 +215,36 @@ object AnnotatePlan
       }
       case leaf:LeafNode =>
       {
-        ???
+        Project(
+          leaf.output :+ buildAnnotation(
+            plan = leaf,
+            rowAnnotation = 
+              Literal(false),
+            colAnnotations = 
+              leaf.output.map { attr => attr.name -> Literal(false) }
+          ),
+          leaf
+        )
       }
     }
-    logger.trace(s"ANNOTATE\n $plan \n  ---vvvvvvv---\n$ret")
+    logger.trace(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
     return ret
   }
 
   def buildAnnotation(
     plan: LogicalPlan,
     rowAnnotation: Expression = null, 
-    colAnnotations: Seq[NamedExpression] = null
+    colAnnotations: Seq[(String, Expression)] = null
   ): NamedExpression = 
   {
     val columns = plan.output.map { _.name }
 
-    assert(columns.exists { _.equals(Caveats.ANNOTATION_COLUMN) })
+    // If we're being asked to propagate existing caveats, we'd better
+    // be seeing an annotation in the input schema
+    assert(
+      ((rowAnnotation != null) && (colAnnotations != null)) ||
+      columns.exists { _.equals(Caveats.ANNOTATION_COLUMN) }
+    )
 
     val realRowAnnotation: Expression =
       Option(rowAnnotation)
@@ -240,13 +252,19 @@ object AnnotatePlan
 
     val realColAnnotations: Expression =
       Option(colAnnotations)
-        .map { CreateStruct(_) }
+        .map { cols => 
+
+          // CreateNamedStruct takes parameters in groups of 2: name -> value
+          CreateNamedStruct(
+            cols.flatMap { case (a, b) => Seq(Literal(a),b) }
+          ) 
+        }
         .getOrElse { Caveats.allAttributeAnnotationsExpression }
 
     Alias(
-      CreateStruct(Seq(
-        Alias(realRowAnnotation, Caveats.ROW_ANNOTATION)(),
-        Alias(realColAnnotations, Caveats.COLUMN_ANNOTATION)()
+      CreateNamedStruct(Seq(
+        Literal(Caveats.ROW_ANNOTATION), realRowAnnotation,
+        Literal(Caveats.COLUMN_ANNOTATION), realColAnnotations
       )),
       Caveats.ANNOTATION_COLUMN
     )()

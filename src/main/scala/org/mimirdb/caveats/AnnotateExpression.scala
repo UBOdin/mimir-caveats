@@ -97,8 +97,32 @@ object AnnotateExpression
 
       }
 
+      case And(lhs, rhs) => {
+        val lhsCaveat = apply(lhs)
+        val rhsCaveat = apply(rhs)
+        foldOr(
+          // Propagate when caveats appear on both sides
+          foldAnd(lhsCaveat, rhsCaveat),
+          // When RHS is true, propagate the LHS caveat
+          foldAnd(lhsCaveat, rhs),
+          // When LHS is true, propagate the RHS caveat
+          foldAnd(rhsCaveat, lhs)
+        )
+      }
+      case Or(lhs, rhs) => {
+        val lhsCaveat = apply(lhs)
+        val rhsCaveat = apply(rhs)
+        foldOr(
+          // Propagate when caveats appear on both sides
+          foldAnd(lhsCaveat, rhsCaveat),
+          // When RHS is false, propagate the LHS caveat
+          foldAnd(lhsCaveat, negate(rhs)),
+          // When LHS is false, propagate the RHS caveat
+          foldAnd(rhsCaveat, negate(lhs))
+        )
+      }
       
-      // TODO: Caveat, If, Case, CaseWhen, And, Or
+      // TODO: And, Or
 
       case _ => fold(expr.children.map { apply(_) })
     }
@@ -108,6 +132,15 @@ object AnnotateExpression
   {
     Alias(apply(expr), expr.name)()
   }
+
+  private def negate(e: Expression) = 
+    e match {
+      case Not(n) => n
+      case Literal(x, BooleanType) => Literal(!x.asInstanceOf[Boolean])
+      case _ => Not(e)
+    }
+  private def foldOr(e:Expression*) = fold(e, true)
+  private def foldAnd(e:Expression*) = fold(e, false)
 
   private def fold(
     conditions: Seq[Expression], 

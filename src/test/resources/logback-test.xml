@@ -7,13 +7,10 @@
     </encoder>
   </appender>
   
-  <!--+++++++++++++++++++++++  Spark  +++++++++++++++++++++++++-->
-  <logger name="log4j.logger.org.apache.spark"                     level="ERROR"/>
-  <logger name="log4j.logger.Remoting"                             level="ERROR"/>
-  <logger name="log4j.logger.org.eclipse.jetty"                    level="ERROR"/>
-
   <!--+++++++++++++++++++++++  Caveats  +++++++++++++++++++++++++-->
-  <logger name="mimir.caveats.Caveats$"                            level="TRACE"/>
+  <logger name="org.mimirdb.caveats" level="ERROR">
+    <appender-ref ref="STDOUT" />
+  </logger>
   
   <root level="ERROR">
     <appender-ref ref="STDOUT" />

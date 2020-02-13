@@ -1,17 +1,18 @@
 package org.mimirdb.caveats
 
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.analysis.{
+  UnresolvedExtractValue,
+  UnresolvedAttribute
+}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.{
   Expression,
   Literal,
   Attribute
 }
-import org.apache.spark.sql.catalyst.analysis.{
-  UnresolvedExtractValue,
-  UnresolvedAttribute
-}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
 
 object Caveats
 {
@@ -38,11 +39,19 @@ object Caveats
     val execState = dataset.queryExecution
     val plan = execState.analyzed
     val annotated = annotate(plan)
+    val baseSchema = plan.schema
+
     return new DataFrame(
       execState.sparkSession,
       annotated,
-      ???
-      ///RowEncoder(annotated.queryExecution.analyzed.schema) 
+      RowEncoder(
+        plan.schema.add(
+          ANNOTATION_COLUMN, 
+          annotationStruct(plan.schema),
+          false
+        )
+      )
+      ///RowEncoder() 
       // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
       //       (and final, so we can't make it accessible with reflection)
     )
@@ -71,7 +80,7 @@ object Caveats
   def attributeAnnotationExpression(attr: Attribute): Expression =
     UnresolvedExtractValue(
       allAttributeAnnotationsExpression,
-      attr
+      Literal(attr.name)
     )
 
   def rowAnnotationExpression: Expression =
@@ -80,4 +89,15 @@ object Caveats
       Literal(ROW_ANNOTATION)
     )
 
+  def annotationStruct(baseSchema:StructType): StructType =
+  {
+    StructType(Seq(
+      StructField(ROW_ANNOTATION, BooleanType, false),
+      StructField(COLUMN_ANNOTATION, StructType(
+        baseSchema.fieldNames.map { 
+          StructField(_, BooleanType, false)
+        }
+      ), false)
+    ))
+  }
 }

@@ -9,7 +9,7 @@
       </layout>
   </appender>
 
-  <category name="mimir.caveats">  
+  <category name="org.mimirdb.caveats">  
       <priority value="TRACE" />  
   </category>  
 

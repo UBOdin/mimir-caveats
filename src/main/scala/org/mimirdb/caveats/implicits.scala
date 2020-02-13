@@ -1,6 +1,6 @@
 package org.mimirdb.caveats
 
-import org.apache.spark.sql.Column
+import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
 
 class ColumnImplicits(col: Column)
@@ -26,7 +26,15 @@ class ColumnImplicits(col: Column)
     ))
 }
 
+class DataFrameImplicits(df:DataFrame)
+{
+  def annotate = Caveats.annotate(df)
+}
+
 object implicits
 {
-  implicit def columnImplicits(col: Column): ColumnImplicits = new ColumnImplicits(col)
+  implicit def columnImplicits(col: Column): ColumnImplicits = 
+    new ColumnImplicits(col)
+  implicit def dataFrameImplicits(df: DataFrame): DataFrameImplicits = 
+    new DataFrameImplicits(df)
 }

@@ -1,19 +1,22 @@
 package org.mimirdb.caveats
 
 import org.specs2.mutable.Specification
-import org.specs2.matcher.Matcher
 
 import org.apache.spark.sql.{ SparkSession, DataFrame, Column }
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReference
 import org.apache.spark.sql.catalyst.plans.logical.Project
 import org.apache.spark.sql.functions.{ col, lit, when }
 import org.apache.spark.sql.types._
 
+
 import org.mimirdb.caveats.implicits._
 
-class ExpressionSpec extends Specification 
+class ExpressionSpec 
+  extends Specification 
+  with ExpressionMatchers
 {
 
   lazy val spark = 
@@ -27,68 +30,45 @@ class ExpressionSpec extends Specification
          .option("header", "true")
          .load("test_data/r.csv")
 
-  def resolve(e: Column, df: DataFrame = testData) =
-    df.select(e)
-      .queryExecution
-      .analyzed
-      .asInstanceOf[Project]
-      .projectList(0)
-
-  def row(fields:(Column, Boolean)*) = {
-    val emptyRow = InternalRow()
+  def row(fields:(Any, Boolean)*) = {
     InternalRow.fromSeq(
-      fields.map { _._1.expr.eval(emptyRow) } :+
+      fields.map { _._1 }
+            .map { Literal(_).eval(InternalRow()) } :+
       InternalRow(
         false,
-        InternalRow(fields.map { _._2 })
+        InternalRow(fields.map { _._2 }:_*)
       )
     )
   }
 
-  def attr(e: String, df: DataFrame = testData): Attribute =
-    resolve(col(e), df).asInstanceOf[Attribute]
-
-  def cast(e: Expression, t: DataType): Expression = 
-    Cast(e, t, Some(java.time.ZoneId.systemDefault.toString))
-
-  def attrAnnotation(attribute:String, df: DataFrame = testData) = 
-    Caveats.attributeAnnotationExpression(
-      attr(attribute, df).asInstanceOf[Attribute]
-    )
-
-  def annotate(e: Column, df: DataFrame = testData): Expression =
-    AnnotateExpression( resolve(e, df) )
-
-  def recursiveCmp(e1: Expression, e2: Expression): Seq[String] =
+  def annotate[T](e: Column)(op: Expression => T): T =
   {
-    if(e1.semanticEquals(e2)){ return Seq() }
-    if(e1.children.length != e2.children.length) {
-      Seq(
-        "Differing numbers of children:",
-        s"  ${e1.children.length} children: $e1",
-        s"  ${e2.children.length} children: $e2"
-      )
-    } else {
-      val childCmp = 
-        e1.children.zip(e2.children).flatMap { case (child1, child2) => recursiveCmp(child1, child2) }
-      if(childCmp.isEmpty) {
-        def decorate(e: Expression): String = {
-          (Seq(e.getClass.toString) ++ (e match {
-            case Cast(_, _, tz) => Seq(s"Timezone: $tz")
-            case _ => Seq()
-          })).mkString(", ")
-        }
-
-        Seq(
-          s"Got:      $e1 (${decorate(e1)})",
-          s"Expected: $e2 (${decorate(e2)})"
-        )
-      } else { childCmp }
-    }
+    val wrapper =
+      testData.select(e)
+              .annotate
+              .queryExecution
+              .analyzed
+              .asInstanceOf[Project]
+    val schema = 
+      wrapper.child.output
+    val result =
+      wrapper
+        .projectList
+        .find { _.name.equals(Caveats.ANNOTATION_COLUMN) }
+        .get
+        .children(0) // Strip off the Alias
+        .asInstanceOf[CreateNamedStruct]
+        .valExprs(1) // Caveats.COLUMN_ANNOTATION
+        .asInstanceOf[CreateNamedStruct]
+        .valExprs(0) // The only column we added
+    
+    op( bindReference(result, schema) )
   }
 
-  def beEquivalentTo(cmp:Expression): Matcher[Expression] = { e: Expression =>
-    (e.semanticEquals(cmp), s"$e !≅ $cmp\n${recursiveCmp(e, cmp).map { "  "+_ }.mkString("\n")}")
+  def test(e: Expression)(fields: (Any, Boolean)*): Boolean =
+  {
+    val ret = e.eval(row(fields:_*))
+    ret.asInstanceOf[Boolean]
   }
 
   "AnnotateExpression" in {
@@ -96,8 +76,17 @@ class ExpressionSpec extends Specification
     "handle simple caveat-free annotation" >> {
       import spark.implicits._
 
-      annotate(lit(1)) must beEquivalentTo(Literal(false))
-      annotate($"A") must beEquivalentTo(attrAnnotation("A"))
+      annotate(lit(1)) { e => 
+        e must beEquivalentTo(Literal(false))
+        test(e)() must beFalse
+      }
+
+      annotate($"A"){ e =>
+        test(e)("1" -> false, "2" -> false, "3" -> false) must beFalse
+        test(e)("1" -> false, "2" -> true,  "3" -> false) must beFalse
+        test(e)("1" -> true,  "2" -> false, "3" -> false) must beTrue
+      }
+
     }
 
     "handle simple annotation with caveats" >> {
@@ -105,43 +94,68 @@ class ExpressionSpec extends Specification
 
       annotate(
         $"A".caveat("a possible error")
-      ) must beEquivalentTo(Literal(true))
+      ) { e => 
+        test(e)("1" -> false, "2" -> false, "3" -> false) must beTrue
+      }
+      
     }
 
     "handle when clauses" >> {
       import spark.implicits._
 
-      annotate( 
-        when(lit(0) === 0, $"A")
-          .otherwise(1) 
-      ) must beEquivalentTo(
-        CaseWhen(Seq(
-            EqualTo(Literal(0), Literal(0)) -> attrAnnotation("A")
-          ), Literal(false)
-        )
-      )
-
-      annotate( 
+      annotate(
         when($"B" === 0, $"A")
           .otherwise(1) 
-      ) must beEquivalentTo(
-        CaseWhen(Seq(
-            attrAnnotation("B") -> Literal(true),
-            EqualTo(cast(attr("B"), IntegerType), Literal(0)) -> attrAnnotation("A")
-          ), Literal(false)
-        )
-      )
+      ){ e => 
+        test(e)("0" -> false, "1" -> false, "2" -> false) must beFalse
+        test(e)("0" -> false, "1" -> true,  "2" -> false) must beTrue
+        test(e)("0" -> false, "0" -> false, "2" -> false) must beFalse        
+        test(e)("0" -> false, "0" -> true,  "2" -> false) must beTrue
+        test(e)("0" -> true,  "1" -> false, "2" -> false) must beFalse        
+        test(e)("0" -> true,  "0" -> false, "2" -> false) must beTrue
+      }
 
-      annotate( 
+      annotate(
         when($"B" === 0, $"A")
           .otherwise(lit(1).caveat("an error")) 
-      ) must beEquivalentTo(
-        CaseWhen(Seq(
-            attrAnnotation("B") -> Literal(true),
-            EqualTo(cast(attr("B"), IntegerType), Literal(0)) -> attrAnnotation("A")
-          ), Literal(true)
-        )
-      )
+      ){ e => 
+        test(e)("0" -> false, "0" -> false, "2" -> false) must beFalse
+        test(e)("0" -> false, "1" -> false, "2" -> false) must beTrue
+      }
+    }
+
+    "handle conjunctions and disjunctions" >> {
+      import spark.implicits._
+
+      annotate(
+        (($"A" === 1) and 
+          ($"B" === 1)) or 
+            ($"C" === 1)
+      ){ e => 
+        // no caveats
+        test(e)("1" -> false, "1" -> false, "1" -> false) must beFalse
+
+        // F OR T*
+        test(e)("0" -> false, "1" -> false, "1" -> true)  must beTrue
+
+        // T OR T*
+        test(e)("1" -> false, "1" -> false, "1" -> true)  must beFalse
+
+        // T* OR F
+        test(e)("1" -> true, "1" -> false, "0" -> false)  must beTrue
+
+        // T* OR T*
+        test(e)("1" -> true, "1" -> false, "1" -> true)   must beTrue
+
+        // T* AND T
+        test(e)("1" -> true, "1" -> false, "0" -> false)  must beTrue
+
+        // T* AND F
+        test(e)("1" -> true, "0" -> false, "0" -> false)  must beFalse
+
+        // T* AND T*
+        test(e)("1" -> true, "1" -> true, "0" -> false)   must beTrue
+      }
     }
 
 
