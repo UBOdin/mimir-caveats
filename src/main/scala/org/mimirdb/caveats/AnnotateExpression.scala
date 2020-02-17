@@ -1,8 +1,14 @@
 package org.mimirdb.caveats
 
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate.{
+  AggregateExpression,
+  AggregateFunction,
+  Sum
+}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.spark.sql.types._
+import org.mimirdb.spark.expressionLogic.{foldAnd, foldOr, negate}
 
 /**
  * The [apply] method of this class is used to derive the annotation for an 
@@ -21,7 +27,7 @@ import org.apache.spark.sql.types._
  * A few development notes:
  *  - The annotation expression assumes that the [Row] on which it is evaluated
  *    was the result of a [LogicalPlan] that has been processed by 
- *    [AnnotatePlan] (i.e., there is a [Caveats.ANNOTATION] column).
+ *    [AnnotatePlan] (i.e., there is a [Caveats.ANNOTATION_ATTRIBUTE] attribute).
  **/
 object AnnotateExpression
   extends LazyLogging
@@ -39,20 +45,28 @@ object AnnotateExpression
     // an input attribute has a caveat.
     expr match {
 
+      /////////////////////////////////////////////////////////////////////////
+      // Part 1: Special cases
+      //
+      // For several expression types, we can do better than the naive default.
+      /////////////////////////////////////////////////////////////////////////
+
       // The caveat expression (obviously) is always caveated
-      case caveat: Caveat => Literal(true)
+      case caveat: ApplyCaveat => Literal(true)
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => Caveats.attributeAnnotationExpression(a)
+      case a: Attribute => Caveats.attributeAnnotationExpression(a.name)
 
       // Not entirely sure how to go about handling subqueries yet
-      case sq: SubqueryExpression => throw new AnnotationException("Can't handle subqueries yet", expr)
+      case sq: SubqueryExpression => ???
       
+      // If the predicate is guaranteed safe, we can limit ourselves to the
+      // caveattedness of either the then or else clause.
       case If(predicate, thenClause, elseClause) => 
 
         // Two possible sources of taint: 'predicate' and the clauses.
         // Consider each case separately and then combine disjunctively.
-        fold(Seq(
+        foldOr(Seq(
 
           // If 'predicate' is contaminated, it will contaminate the entire
           // expression.  
@@ -61,8 +75,11 @@ object AnnotateExpression
           // Otherwise, propagate the annotation from whichever branch ends
           // up being taken
           If(predicate, apply(thenClause), apply(elseClause))
-        ))
+        ):_*)
 
+      // Similarly, if all preceding predicates of a CaseWhen are guaranteed 
+      // safe, we can limit ourselves to the caveattedness of the corresponding 
+      // branch.
       case CaseWhen(branches, otherwise) => {
 
         // This is basically the 'if' case on steroids.  The approach here is
@@ -97,6 +114,7 @@ object AnnotateExpression
 
       }
 
+      // For AND, we can fall through if either side is safely false.
       case And(lhs, rhs) => {
         val lhsCaveat = apply(lhs)
         val rhsCaveat = apply(rhs)
@@ -109,6 +127,8 @@ object AnnotateExpression
           foldAnd(rhsCaveat, lhs)
         )
       }
+
+      // For OR, we can fall through if either side is safely true.
       case Or(lhs, rhs) => {
         val lhsCaveat = apply(lhs)
         val rhsCaveat = apply(rhs)
@@ -121,10 +141,72 @@ object AnnotateExpression
           foldAnd(rhsCaveat, negate(lhs))
         )
       }
-      
-      // TODO: And, Or
 
-      case _ => fold(expr.children.map { apply(_) })
+      /////////////////////////////////////////////////////////////////////////
+      // Part 2: Aggregates
+      //
+      // Spark logical plans are more closely tied to SQL syntax than to the
+      // execution model, insofar as Aggregate() expressions are allowed to 
+      // define both pre- and post- aggregation expressions.  That is, we're
+      // allowed to have something like:
+      // 
+      //    SELECT sum(a+c)+sum(b+d) FROM ...
+      // 
+      // a+c get evaluated before the aggregation, and the two independent sums
+      // get evaluated afterwards.  
+      // 
+      // AnnotateExpression is designed to handle such expressions as well.  
+      // When an AggregateExpression appears here, the annotated result will 
+      // also include an AggregateExpression that computes the corresponding
+      // attribute annotation.
+      /////////////////////////////////////////////////////////////////////////
+      case AggregateExpression(
+        aggFn, mode, isDistinct, resultId
+      ) => 
+      {
+        // For now, we do something blatantly simple: The aggregate value is
+        // caveated if:
+        // 1. One of the aggregate function's arguments is caveated
+        // 2. The filter (if present) is affected by a caveated value
+        // 
+        // This doesn't quite get us as tight a result as we could possibly get:
+        // TODO: See if there are any aggregates that we can special-case
+        // TODO: We might be able to get some added tightness from isDistinct
+        // 
+        // Another note: `mode` seems to be used mainly by the optimizer. 
+        // See:
+        // https://github.com/apache/spark/blob/master/sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/expressions/aggregate/interfaces.scala
+        // 
+        // I'm not 100% certain, but I think the idea is to allow the optimizer
+        // to rewrite the expression for partition-friendliness without needing
+        // to muck around with the innards of aggFn... which internally defines
+        // all of the aggregate logic.  As long as AnnotateExpression behaves
+        // deterministically, this means that we should just be able to 
+        // propagate the mode... and the other places in the tree where the
+        // expression appears will just play nice.... I hope?
+        //
+        // TODO: Spark 3 appears to introduce a BoolOr aggregate.  Use that
+        //       instead of the Sum + Comparison hack below
+
+        val argumentAnnotations = aggFn.children.map { apply(_) }
+        val isCaveated = foldOr(argumentAnnotations:_*)
+
+        GreaterThan(
+          AggregateExpression(
+            aggregateFunction = Sum(If(isCaveated, Literal(1), Literal(0))),
+            mode = mode, // see above
+            isDistinct = false,
+            resultId = NamedExpression.newExprId
+          ), Literal(0))
+      }
+      
+      case _:AggregateFunction => 
+        throw new IllegalArgumentException(
+          "Expecting all `AggregateFunction`s to be nested within an AggregateExpression")
+
+      //
+      // We're not in one of our special cases.  
+      case _ => foldOr(expr.children.map { apply(_) }:_*)
     }
   }
 
@@ -132,33 +214,4 @@ object AnnotateExpression
   {
     Alias(apply(expr), expr.name)()
   }
-
-  private def negate(e: Expression) = 
-    e match {
-      case Not(n) => n
-      case Literal(x, BooleanType) => Literal(!x.asInstanceOf[Boolean])
-      case _ => Not(e)
-    }
-  private def foldOr(e:Expression*) = fold(e, true)
-  private def foldAnd(e:Expression*) = fold(e, false)
-
-  private def fold(
-    conditions: Seq[Expression], 
-    disjunctive: Boolean = true
-  ): Expression =
-    conditions.filter { !_.equals(Literal(!disjunctive)) } match {
-      // Non-caveatted node.
-      case Seq() => Literal(!disjunctive)
-
-      // One potential caveat.
-      case Seq(condition) => condition
-
-      // Always caveatted node
-      case c if c.exists { _.equals(Literal(disjunctive)) } => Literal(disjunctive)
-
-      // Multiple potential caveats
-      case c => 
-        val op = (if(disjunctive) { Or(_,_) } else { And(_,_) })
-        c.tail.foldLeft(c.head) { op(_,_) }
-    }
 }

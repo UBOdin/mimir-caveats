@@ -1,23 +1,21 @@
 package org.mimirdb.caveats
 
-import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.expressions.codegen.{ CodegenContext, ExprCode }
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.Row
 
 case class Caveat(
-  value: Expression,
-  message: Expression,
-  family: Option[String] = None,
-  key: Seq[Expression] = Seq()
-) extends Expression
-  with UserDefinedExpression
+  message: String,
+  family: Option[String],
+  key: Seq[Any]
+)
+
+object Caveat
 {
-  def dataType = value.dataType
-  protected def doGenCode(ctx: CodegenContext,ev: ExprCode): ExprCode = 
-    value.genCode(ctx)
-  def eval(input: InternalRow) = value.eval(input)
-  def nullable = value.nullable
-  def children = Seq(value, message) ++ key
+  def apply(family: Option[String], config:Row): Caveat =
+  {
+    Caveat(
+      message = config.getAs[String](Constants.MESSAGE_ATTRIBUTE),
+      family  = family,
+      key     = config.getAs[Seq[Any]](Constants.KEY_ATTRIBUTE)
+    )
+  }
 }
-
-

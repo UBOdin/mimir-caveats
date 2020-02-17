@@ -13,26 +13,23 @@ import org.apache.spark.sql.catalyst.expressions.{
 }
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
+import org.mimirdb.caveats.Constants._
 
 object Caveats
 {
 
-  val ANNOTATION_COLUMN  = "__CAVEATS"
-  val ROW_ANNOTATION     = "ROW"
-  val COLUMN_ANNOTATION  = "COLUMN"
-
 
   /**
-   * Extend the provided [DataFrame] with an annotation column.
+   * Extend the provided [DataFrame] with an annotation attribute.
    * 
-   * The column will use the identifier [Caveats.ANNOTATION_COLUMN].  It will be
-   * a [Struct] with two fields identified by [Caveat.ROW_ANNOTATION] and 
-   * [Caveat.COLUMN_ANNOTATION].  The row annotation is Boolean-typed, while the
-   * column annotation is a structure with one Boolean-typed field for each 
-   * column of the input [DataFrame].
+   * The attribute will use the identifier [Caveats.ANNOTATION_ATTRIBUTE].  It 
+   * will be a [Struct] with two fields identified by [Caveat.ROW_FIELD] and 
+   * [Caveat.ATTRIBUTE_FIELD].  The row annotation is Boolean-typed, while the
+   * attribute annotation is a structure with one Boolean-typed field for each 
+   * attribute of the input [DataFrame] (i.e. `df.output`).
 
    * @param   dataset  The [DataFrame] to anotate
-   * @return           [dataset] extended with an annotation column
+   * @return           [dataset] extended with an annotation attribute
    **/
   def annotate(dataset:DataFrame): DataFrame = 
   {
@@ -46,7 +43,7 @@ object Caveats
       annotated,
       RowEncoder(
         plan.schema.add(
-          ANNOTATION_COLUMN, 
+          ANNOTATION_ATTRIBUTE, 
           annotationStruct(plan.schema),
           false
         )
@@ -58,12 +55,12 @@ object Caveats
   }
 
   /**
-   * Extend the provided [LogicalPlan] with an annotation column.
+   * Extend the provided [LogicalPlan] with an annotation attribute.
    * 
    * see annotate(DataFrame) 
 
    * @param   plan  The [LogicalPlan] to anotate
-   * @return        [plan] extended to produce an annotation column
+   * @return        [plan] extended to produce an annotation attribute
    **/
   def annotate(plan:LogicalPlan): LogicalPlan = 
   {
@@ -71,29 +68,36 @@ object Caveats
   }
 
 
-  def allAttributeAnnotationsExpression: Expression =
+  def allAttributeAnnotationsExpression(
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
     UnresolvedExtractValue(
-      UnresolvedAttribute(ANNOTATION_COLUMN),
-      Literal(COLUMN_ANNOTATION)
+      UnresolvedAttribute(annotation),
+      Literal(ATTRIBUTE_FIELD)
     )
 
-  def attributeAnnotationExpression(attr: Attribute): Expression =
+  def attributeAnnotationExpression(
+    attr: String, 
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
     UnresolvedExtractValue(
-      allAttributeAnnotationsExpression,
-      Literal(attr.name)
+      allAttributeAnnotationsExpression(annotation),
+      Literal(attr)
     )
 
-  def rowAnnotationExpression: Expression =
+  def rowAnnotationExpression(
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
     UnresolvedExtractValue(
-      UnresolvedAttribute(ANNOTATION_COLUMN),
-      Literal(ROW_ANNOTATION)
+      UnresolvedAttribute(annotation),
+      Literal(ROW_FIELD)
     )
 
   def annotationStruct(baseSchema:StructType): StructType =
   {
     StructType(Seq(
-      StructField(ROW_ANNOTATION, BooleanType, false),
-      StructField(COLUMN_ANNOTATION, StructType(
+      StructField(ROW_FIELD, BooleanType, false),
+      StructField(ATTRIBUTE_FIELD, StructType(
         baseSchema.fieldNames.map { 
           StructField(_, BooleanType, false)
         }
