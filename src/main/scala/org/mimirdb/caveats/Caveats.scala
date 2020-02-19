@@ -41,13 +41,14 @@ object Caveats
    * @return                    [dataset] extended with an annotation attribute
    **/
   def annotate(dataset:DataFrame, 
+    style: AnnotationStyle = CaveatExists,
     pedantic: Boolean = true,
     ignoreUnsupported: Boolean = false,
     trace: Boolean = false): DataFrame = 
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = new AnnotatePlan(
+    val annotated = style(
         pedantic = pedantic, 
         ignoreUnsupported = ignoreUnsupported,
         trace = trace

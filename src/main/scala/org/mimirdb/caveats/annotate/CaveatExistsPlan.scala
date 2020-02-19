@@ -20,19 +20,18 @@ import org.mimirdb.spark.expressionLogic.{
   aggregateBoolOr
 }
 
-class AnnotatePlan(
+class CaveatExistsPlan(
   pedantic: Boolean = true,
   ignoreUnsupported: Boolean = false,
-  trace: Boolean = false,
+  trace: Boolean = false
 )
-  extends LazyLogging
+  extends PlanAnnotator
+  with LazyLogging
 {
 
-  lazy val annotateExpression = AnnotateExpression(_:Expression, 
-                                                    pedantic = pedantic)
-  lazy val annotateAggregate  = AnnotateExpression(_:Expression, 
-                                                    pedantic = pedantic, 
-                                                    expectAggregate = true)
+  lazy val annotateAggregate  = new CaveatExistsInExpression(pedantic = pedantic,
+                                                             expectAggregate = true)
+  lazy val annotateExpression = annotateAggregate.withoutExpectingAggregate
 
   /** 
    * Return a logical plan identical to the input plan, but with an additional 

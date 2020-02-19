@@ -35,14 +35,17 @@ import org.mimirdb.spark.expressionLogic.{
  *    was the result of a [LogicalPlan] that has been processed by 
  *    [AnnotatePlan] (i.e., there is a [Caveats.ANNOTATION_ATTRIBUTE] attribute).
  **/
-class AnnotateExpression(
+class CaveatExistsInExpression(
   pedantic: Boolean,
   expectAggregate: Boolean
 )
   extends LazyLogging
 {
-  lazy val withoutExpectingAggregate = 
-    new AnnotateExpression(pedantic = pedantic, expectAggregate = false)
+  val withoutExpectingAggregate = 
+    if(expectAggregate){
+      new CaveatExistsInExpression(pedantic = pedantic, expectAggregate = false)
+    } else { this }
+
 
   /**
    * Derive an expression to compute the annotation of the input expression
@@ -236,7 +239,7 @@ class AnnotateExpression(
   }
 }
 
-object AnnotateExpression
+object CaveatExistsInExpression
 {
   def apply(
     expr: Expression, 
@@ -244,7 +247,7 @@ object AnnotateExpression
     expectAggregate: Boolean = false
   ): Expression =
   {
-    new AnnotateExpression(
+    new CaveatExistsInExpression(
       pedantic = pedantic,
       expectAggregate = expectAggregate
     )(expr)
