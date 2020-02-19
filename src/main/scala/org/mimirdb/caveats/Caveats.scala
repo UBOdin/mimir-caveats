@@ -13,6 +13,8 @@ import org.apache.spark.sql.catalyst.expressions.{
 }
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
+
+import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
 object Caveats
@@ -28,14 +30,28 @@ object Caveats
    * attribute annotation is a structure with one Boolean-typed field for each 
    * attribute of the input [DataFrame] (i.e. `df.output`).
 
-   * @param   dataset  The [DataFrame] to anotate
-   * @return           [dataset] extended with an annotation attribute
+   * @param   dataset           The [DataFrame] to anotate
+   * @param   pedantic          If true, everything is annotated according to 
+   *                            the official spec.  This may reduce performance
+   *                            or overwhelm the results with too many 
+   *                            annotations.
+   * @param   ignoreUnsupported If true, attempt to work around unsupported plan
+   *                            operators.  We make no guarantees about the 
+   *                            correctness of the resulting annotations.
+   * @return                    [dataset] extended with an annotation attribute
    **/
-  def annotate(dataset:DataFrame): DataFrame = 
+  def annotate(dataset:DataFrame, 
+    pedantic: Boolean = true,
+    ignoreUnsupported: Boolean = false,
+    trace: Boolean = false): DataFrame = 
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = annotate(plan)
+    val annotated = new AnnotatePlan(
+        pedantic = pedantic, 
+        ignoreUnsupported = ignoreUnsupported,
+        trace = trace
+      )(plan)
     val baseSchema = plan.schema
 
     return new DataFrame(
@@ -44,7 +60,7 @@ object Caveats
       RowEncoder(
         plan.schema.add(
           ANNOTATION_ATTRIBUTE, 
-          annotationStruct(plan.schema),
+          annotationStruct(plan.schema.fieldNames),
           false
         )
       )
@@ -52,19 +68,6 @@ object Caveats
       // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
       //       (and final, so we can't make it accessible with reflection)
     )
-  }
-
-  /**
-   * Extend the provided [LogicalPlan] with an annotation attribute.
-   * 
-   * see annotate(DataFrame) 
-
-   * @param   plan  The [LogicalPlan] to anotate
-   * @return        [plan] extended to produce an annotation attribute
-   **/
-  def annotate(plan:LogicalPlan): LogicalPlan = 
-  {
-    return AnnotatePlan(plan)
   }
 
 
@@ -93,12 +96,12 @@ object Caveats
       Literal(ROW_FIELD)
     )
 
-  def annotationStruct(baseSchema:StructType): StructType =
+  def annotationStruct(fieldNames:Seq[String]): StructType =
   {
     StructType(Seq(
       StructField(ROW_FIELD, BooleanType, false),
       StructField(ATTRIBUTE_FIELD, StructType(
-        baseSchema.fieldNames.map { 
+        fieldNames.map { 
           StructField(_, BooleanType, false)
         }
       ), false)

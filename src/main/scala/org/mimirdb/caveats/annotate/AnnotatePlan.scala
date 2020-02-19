@@ -1,4 +1,4 @@
-package org.mimirdb.caveats
+package org.mimirdb.caveats.annotate
 
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -10,19 +10,37 @@ import org.apache.spark.sql.catalyst.AliasIdentifier
 
 import com.typesafe.scalalogging.LazyLogging
 
+import org.mimirdb.caveats._
+import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.spark.expressionLogic.{
   foldOr, 
-  attributesOfExpression
+  foldIf,
+  attributesOfExpression,
+  aggregateBoolOr
 }
 
-object AnnotatePlan
+class AnnotatePlan(
+  pedantic: Boolean = true,
+  ignoreUnsupported: Boolean = false,
+  trace: Boolean = false,
+)
   extends LazyLogging
 {
 
+  lazy val annotateExpression = AnnotateExpression(_:Expression, 
+                                                    pedantic = pedantic)
+  lazy val annotateAggregate  = AnnotateExpression(_:Expression, 
+                                                    pedantic = pedantic, 
+                                                    expectAggregate = true)
+
   /** 
    * Return a logical plan identical to the input plan, but with an additional 
-   * attribute containing caveat annotations. 
+   * attribute containing caveat annotations.  
+   * 
+   * By analogy, if, after evaluation a row annotation is false, calling 
+   * EnumerateCaveats should not return any row-level caveats when limited to
+   * the slice including the specified row.
    */
   def apply(plan: LogicalPlan): LogicalPlan =
   {
@@ -30,7 +48,7 @@ object AnnotatePlan
       plan.mapChildren { apply(_) }
 
     def PLAN_IS_FREE_OF_CAVEATS = 
-      extendPlan(
+      buildPlan(
         plan = plan,
         schema = plan.output,
         row = Literal(false),
@@ -81,7 +99,7 @@ object AnnotatePlan
         val annotation = 
           buildAnnotation(
             rewrittenChild, 
-            attributes = projectList.map { e => e.name -> AnnotateExpression(e) }
+            attributes = projectList.map { e => e.name -> annotateExpression(e) }
           )
         Project(
           projectList = projectList :+ annotation,
@@ -112,7 +130,7 @@ object AnnotatePlan
           a generator is/should be a strict superset of [child].
         */
 
-        val generatorAnnotation = AnnotateExpression(generator)
+        val generatorAnnotation = annotateExpression(generator)
         val rewrittenChild = apply(child)
         extendPlan(
           // If there's a caveat on the generator, the number of rows might
@@ -147,10 +165,10 @@ object AnnotatePlan
           Filter is a normal where clause.  Caveats on the condition expression
           get propagated into the row annotation.
         */
-        val conditionAnnotation = AnnotateExpression(condition)
+        val conditionAnnotation = annotateExpression(condition)
         val rewrittenChild = apply(child)
         extendPlan(
-          plan = rewrittenChild,
+          plan = Filter(condition, rewrittenChild),
           schema = plan.output,
           row = conditionAnnotation
         )
@@ -217,7 +235,7 @@ object AnnotatePlan
             apply(right)
           )
 
-        val conditionAnnotation = condition.map { AnnotateExpression(_) }
+        val conditionAnnotation = condition.map { annotateExpression(_) }
         val annotation = buildAnnotation(
           plan,
         )
@@ -357,37 +375,32 @@ object AnnotatePlan
         val groupingAttributes =
           groupingExpressions.flatMap { attributesOfExpression(_) }.toSet
         val aGroupingAttributeIsCaveated = 
-          foldOr((
-            EnumerateCaveats(child)(
-              fields = groupingAttributes.map { _.name }
-            ).map { caveatSet => Not(caveatSet.isEmptyExpression) }
-          ):_*)
+          if(!groupingAttributes.isEmpty){
+            foldOr((
+              EnumeratePlanCaveats(child)(
+                fields = groupingAttributes.map { _.name }
+              ).map { caveatSet => Not(caveatSet.isEmptyExpression) }
+            ):_*)
+          } else { Literal(false) }
         val groupMembershipDependsOnACaveat =
-          foldOr(groupingExpressions.map { AnnotateExpression(_) }:_*)
+          foldOr(groupingExpressions.map { annotateAggregate(_) }:_*)
 
-        // A little bit of a hack.  Spark 3 includes a BoolOr aggregate.  Since
-        // 2.4 doesn't have that, we hack one in with Sum/GreaterThan
-        val rowAnnotation =
-          GreaterThan(
-            AggregateExpression(
-              Sum(If(groupMembershipDependsOnACaveat, Literal(1), Literal(0))),
-              Complete,
-              false,
-              NamedExpression.newExprId
-            ),
-            Literal(0)
-          )
+        val rowAnnotation = groupMembershipDependsOnACaveat
+
 
         val attrAnnotations = 
           aggregateExpressions.map { aggr => 
             // If group membership depends on a caveat, it becomes necessary to
             // annotate each and every aggregate value, since they could change
+            // (hence the groupMembershipDependsOnACaveat here).
+            //
+            // Additionally, 
             // TODO: refine this so that group-by attributes don't get annotated
             // TODO: move grouping caveats out to table-level?
             aggr.name -> foldOr(
-              AnnotateExpression(aggr), 
-              groupMembershipDependsOnACaveat
-            )
+                           annotateAggregate(aggr), 
+                           groupMembershipDependsOnACaveat
+                         )
           }
 
         val annotation = 
@@ -508,7 +521,12 @@ object AnnotatePlan
         PLAN_IS_FREE_OF_CAVEATS
       }
     }
-    logger.trace(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
+    if(trace){
+      println(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
+    } else {
+      logger.trace(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
+    }
+      
     return ret
   }
 
@@ -522,6 +540,7 @@ object AnnotatePlan
     val annotation = 
       extendAnnotation(
         plan = plan,
+        schema = schema,
         row = row,
         attributes = attributes
       )
@@ -552,6 +571,7 @@ object AnnotatePlan
 
   def extendAnnotation(
     plan: LogicalPlan,
+    schema: Seq[Attribute],
     row: Expression = null,
     attributes: Seq[(String, Expression)] = Seq()
   ): NamedExpression = 
@@ -567,7 +587,7 @@ object AnnotatePlan
     }
 
     var attributeAnnotations = 
-      plan.output.map { attribute => 
+      schema.map { attribute => 
         attribute.name -> Caveats.attributeAnnotationExpression(attribute.name)
       } ++ attributes
 

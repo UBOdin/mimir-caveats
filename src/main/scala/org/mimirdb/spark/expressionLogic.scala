@@ -1,6 +1,7 @@
 package org.mimirdb.spark
 
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.types._
 
 object expressionLogic
@@ -18,6 +19,23 @@ object expressionLogic
     }
   def foldOr(e:Expression*) = fold(e, true)
   def foldAnd(e:Expression*) = fold(e, false)
+  def foldIf(i:Expression)(t: Expression)(e: Expression) = 
+    e match {
+      case Literal(true, BooleanType) => t
+      case Literal(false, BooleanType) => e
+      case _ => If(i, t, e)
+    }
+
+  def aggregateBoolOr(e:Expression) =
+    GreaterThan(
+      AggregateExpression(
+        Sum(foldIf(e){ Literal(1) }{ Literal(0) }),
+        Complete,
+        false,
+        NamedExpression.newExprId
+      ),
+      Literal(0)
+    )
 
   private def fold(
     conditions: Seq[Expression], 

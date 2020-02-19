@@ -1,4 +1,4 @@
-package org.mimirdb.caveats
+package org.mimirdb.caveats.annotate
 
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.{
@@ -8,7 +8,13 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.{
 }
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.spark.sql.types._
-import org.mimirdb.spark.expressionLogic.{foldAnd, foldOr, negate}
+import org.mimirdb.caveats._
+import org.mimirdb.spark.expressionLogic.{
+  foldAnd, 
+  foldOr, 
+  negate, 
+  aggregateBoolOr
+}
 
 /**
  * The [apply] method of this class is used to derive the annotation for an 
@@ -29,9 +35,15 @@ import org.mimirdb.spark.expressionLogic.{foldAnd, foldOr, negate}
  *    was the result of a [LogicalPlan] that has been processed by 
  *    [AnnotatePlan] (i.e., there is a [Caveats.ANNOTATION_ATTRIBUTE] attribute).
  **/
-object AnnotateExpression
+class AnnotateExpression(
+  pedantic: Boolean,
+  expectAggregate: Boolean
+)
   extends LazyLogging
 {
+  lazy val withoutExpectingAggregate = 
+    new AnnotateExpression(pedantic = pedantic, expectAggregate = false)
+
   /**
    * Derive an expression to compute the annotation of the input expression
    * 
@@ -51,11 +63,22 @@ object AnnotateExpression
       // For several expression types, we can do better than the naive default.
       /////////////////////////////////////////////////////////////////////////
 
-      // The caveat expression (obviously) is always caveated
-      case caveat: ApplyCaveat => Literal(true)
+      // The caveat expression (obviously) is always caveated.  If we're not
+      // running in pedantic mode however, exclude global caveats.
+      case caveat: ApplyCaveat => 
+        if(pedantic || !caveat.global) { Literal(true) }
+        else { apply(caveat.value) }
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => Caveats.attributeAnnotationExpression(a.name)
+      //
+      // Note: If we're expecting an aggregate, we can encounter loose 
+      // attributes (e.g., part of the grouping expressions).  If so, the 
+      // corresponding annotation lookup needs to be wrapped in an aggregate.
+      case a: Attribute if expectAggregate => 
+        aggregateBoolOr(Caveats.attributeAnnotationExpression(a.name))        
+
+      case a: Attribute => 
+        Caveats.attributeAnnotationExpression(a.name)
 
       // Not entirely sure how to go about handling subqueries yet
       case sq: SubqueryExpression => ???
@@ -187,17 +210,14 @@ object AnnotateExpression
         //
         // TODO: Spark 3 appears to introduce a BoolOr aggregate.  Use that
         //       instead of the Sum + Comparison hack below
-
-        val argumentAnnotations = aggFn.children.map { apply(_) }
+        if(!expectAggregate){
+          throw new IllegalArgumentException("Unexpected aggregate within an aggregate")
+        }
+        val argumentAnnotations = aggFn.children.map { 
+                                    withoutExpectingAggregate(_) 
+                                  }
         val isCaveated = foldOr(argumentAnnotations:_*)
-
-        GreaterThan(
-          AggregateExpression(
-            aggregateFunction = Sum(If(isCaveated, Literal(1), Literal(0))),
-            mode = mode, // see above
-            isDistinct = false,
-            resultId = NamedExpression.newExprId
-          ), Literal(0))
+        aggregateBoolOr(isCaveated)
       }
       
       case _:AggregateFunction => 
@@ -213,5 +233,20 @@ object AnnotateExpression
   def preserveName(expr: NamedExpression): NamedExpression =
   {
     Alias(apply(expr), expr.name)()
+  }
+}
+
+object AnnotateExpression
+{
+  def apply(
+    expr: Expression, 
+    pedantic: Boolean = true, 
+    expectAggregate: Boolean = false
+  ): Expression =
+  {
+    new AnnotateExpression(
+      pedantic = pedantic,
+      expectAggregate = expectAggregate
+    )(expr)
   }
 }

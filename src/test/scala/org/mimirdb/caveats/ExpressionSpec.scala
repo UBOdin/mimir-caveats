@@ -17,18 +17,9 @@ import org.mimirdb.caveats.implicits._
 class ExpressionSpec 
   extends Specification 
   with ExpressionMatchers
+  with SharedSparkTestInstance
 {
-
-  lazy val spark = 
-    SparkSession.builder
-      .appName("Mimir-Caveat-Test")
-      .master("local[*]")
-      .getOrCreate()
-  lazy val testData = /* R(A int, B int, C int) */
-    spark.read
-         .format("csv")
-         .option("header", "true")
-         .load("test_data/r.csv")
+  import spark.implicits._
 
   def row(fields:(Any, Boolean)*) = {
     InternalRow.fromSeq(
@@ -44,17 +35,17 @@ class ExpressionSpec
   def annotate[T](e: Column)(op: Expression => T): T =
   {
     val wrapper =
-      testData.select(e)
-              .annotate
-              .queryExecution
-              .analyzed
-              .asInstanceOf[Project]
+      df.select(e)
+        .annotate
+        .queryExecution
+        .analyzed
+        .asInstanceOf[Project]
     val schema = 
       wrapper.child.output
     val result =
       wrapper
         .projectList
-        .find { _.name.equals(Caveats.ANNOTATION_COLUMN) }
+        .find { _.name.equals(Constants.ANNOTATION_ATTRIBUTE) }
         .get
         .children(0) // Strip off the Alias
         .asInstanceOf[CreateNamedStruct]
@@ -74,7 +65,7 @@ class ExpressionSpec
   "AnnotateExpression" in {
 
     "handle simple caveat-free annotation" >> {
-      import spark.implicits._
+      
 
       annotate(lit(1)) { e => 
         e must beEquivalentTo(Literal(false))
@@ -90,8 +81,7 @@ class ExpressionSpec
     }
 
     "handle simple annotation with caveats" >> {
-      import spark.implicits._
-
+      
       annotate(
         $"A".caveat("a possible error")
       ) { e => 
@@ -101,8 +91,7 @@ class ExpressionSpec
     }
 
     "handle when clauses" >> {
-      import spark.implicits._
-
+      
       annotate(
         when($"B" === 0, $"A")
           .otherwise(1) 
@@ -125,8 +114,7 @@ class ExpressionSpec
     }
 
     "handle conjunctions and disjunctions" >> {
-      import spark.implicits._
-
+      
       annotate(
         (($"A" === 1) and 
           ($"B" === 1)) or 
