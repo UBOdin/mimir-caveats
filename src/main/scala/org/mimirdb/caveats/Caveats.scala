@@ -20,7 +20,8 @@ import org.mimirdb.caveats.Constants._
 object Caveats
 {
 
-
+  var defaultAnnotator: AnnotationStyle = CaveatExists()
+  
   /**
    * Extend the provided [DataFrame] with an annotation attribute.
    * 
@@ -40,19 +41,11 @@ object Caveats
    *                            correctness of the resulting annotations.
    * @return                    [dataset] extended with an annotation attribute
    **/
-  def annotate(dataset:DataFrame, 
-    style: AnnotationStyle = CaveatExists,
-    pedantic: Boolean = true,
-    ignoreUnsupported: Boolean = false,
-    trace: Boolean = false): DataFrame = 
+  def annotate(dataset:DataFrame, annotator: AnnotationStyle = defaultAnnotator): DataFrame = 
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = style(
-        pedantic = pedantic, 
-        ignoreUnsupported = ignoreUnsupported,
-        trace = trace
-      )(plan)
+    val annotated = annotator(plan)
     val baseSchema = plan.schema
 
     return new DataFrame(

@@ -25,7 +25,7 @@ class CaveatExistsPlan(
   ignoreUnsupported: Boolean = false,
   trace: Boolean = false
 )
-  extends PlanAnnotator
+  extends AnnotationStyle
   with LazyLogging
 {
 
