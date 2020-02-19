@@ -1,6 +1,6 @@
-package org.mimirdb.caveat.annotate
+package org.mimirdb.caveats.annotate
 
-import org.mimirdb.caveat.annotate._
+import org.mimirdb.caveats.annotate._
 
 object CaveatExistsType extends AnnotationType {
 

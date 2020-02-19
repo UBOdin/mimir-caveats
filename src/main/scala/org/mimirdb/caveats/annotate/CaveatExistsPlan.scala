@@ -29,6 +29,10 @@ class CaveatExistsPlan(
   with LazyLogging
 {
 
+  def annotationEncoding = CaveatExistsBooleanArrayEncoding
+
+  def annotationType = CaveatExistsType
+
   lazy val annotateAggregate  = new CaveatExistsInExpression(pedantic = pedantic,
                                                              expectAggregate = true)
   lazy val annotateExpression = annotateAggregate.withoutExpectingAggregate
