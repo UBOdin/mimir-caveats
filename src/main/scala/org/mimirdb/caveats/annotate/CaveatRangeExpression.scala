@@ -53,7 +53,7 @@ object CaveatRangeExpression
     expr match {
 
       // Access value and bounds stored in Caveat
-      case caveat: RangeCaveat => (caveat.lb, caveat.value, caveat.ub)
+      case caveat: CaveatRange => (caveat.lb, caveat.value, caveat.ub)
 
       // the bounds of a Literal are itself
       case l: Literal => (l,l,l)

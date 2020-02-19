@@ -20,28 +20,28 @@ import org.mimirdb.caveats.Constants._
 object Caveats
 {
 
-  var defaultAnnotator: AnnotationStyle = CaveatExists()
-  
+  var defaultAnnotator: AnnotationInstrumentationStrategy = CaveatExists()
+
   /**
    * Extend the provided [DataFrame] with an annotation attribute.
-   * 
-   * The attribute will use the identifier [Caveats.ANNOTATION_ATTRIBUTE].  It 
-   * will be a [Struct] with two fields identified by [Caveat.ROW_FIELD] and 
+   *
+   * The attribute will use the identifier [Caveats.ANNOTATION_ATTRIBUTE].  It
+   * will be a [Struct] with two fields identified by [Caveat.ROW_FIELD] and
    * [Caveat.ATTRIBUTE_FIELD].  The row annotation is Boolean-typed, while the
-   * attribute annotation is a structure with one Boolean-typed field for each 
+   * attribute annotation is a structure with one Boolean-typed field for each
    * attribute of the input [DataFrame] (i.e. `df.output`).
 
    * @param   dataset           The [DataFrame] to anotate
-   * @param   pedantic          If true, everything is annotated according to 
+   * @param   pedantic          If true, everything is annotated according to
    *                            the official spec.  This may reduce performance
-   *                            or overwhelm the results with too many 
+   *                            or overwhelm the results with too many
    *                            annotations.
    * @param   ignoreUnsupported If true, attempt to work around unsupported plan
-   *                            operators.  We make no guarantees about the 
+   *                            operators.  We make no guarantees about the
    *                            correctness of the resulting annotations.
    * @return                    [dataset] extended with an annotation attribute
    **/
-  def annotate(dataset:DataFrame, annotator: AnnotationStyle = defaultAnnotator): DataFrame = 
+  def annotate(dataset:DataFrame, annotator: AnnotationInstrumentationStrategy = defaultAnnotator): DataFrame =
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
@@ -53,12 +53,12 @@ object Caveats
       annotated,
       RowEncoder(
         plan.schema.add(
-          ANNOTATION_ATTRIBUTE, 
+          ANNOTATION_ATTRIBUTE,
           annotationStruct(plan.schema.fieldNames),
           false
         )
       )
-      ///RowEncoder() 
+      ///RowEncoder()
       // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
       //       (and final, so we can't make it accessible with reflection)
     )
@@ -74,7 +74,7 @@ object Caveats
     )
 
   def attributeAnnotationExpression(
-    attr: String, 
+    attr: String,
     annotation: String = ANNOTATION_ATTRIBUTE
   ): Expression =
     UnresolvedExtractValue(
@@ -95,7 +95,7 @@ object Caveats
     StructType(Seq(
       StructField(ROW_FIELD, BooleanType, false),
       StructField(ATTRIBUTE_FIELD, StructType(
-        fieldNames.map { 
+        fieldNames.map {
           StructField(_, BooleanType, false)
         }
       ), false)

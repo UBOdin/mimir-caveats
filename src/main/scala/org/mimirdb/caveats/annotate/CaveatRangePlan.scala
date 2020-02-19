@@ -13,8 +13,13 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.Constants._
 
 object CaveatRangePlan
-  extends LazyLogging
+  extends AnnotationInstrumentationStrategy
+  with LazyLogging
 {
+
+  def annotationEncoding = CaveatRangeEncoding
+
+  def annotationType = CaveatRangeType
 
   /**
    * Return a logical plan identical to the input plan, but with an additional

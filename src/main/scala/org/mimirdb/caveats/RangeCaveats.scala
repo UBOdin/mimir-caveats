@@ -14,6 +14,9 @@ import org.apache.spark.sql.catalyst.expressions.{
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{ StructType, StructField, IntegerType, BooleanType }
 
+import org.mimirdb.caveats.annotate._
+import org.mimirdb.caveats.Constants._
+
 /**
   * Instrumenting queries to support range caveats which record for
   * each value an lower and upper bound across all possible worlds.
@@ -22,12 +25,6 @@ import org.apache.spark.sql.types.{ StructType, StructField, IntegerType, Boolea
   **/
 object RangeCaveats
 {
-  val ANNOTATION_COLUMN = "__CAVEATS"
-  val ROW_ANNOTATION = "ROW"
-  val COLUMN_ANNOTATION = "COLUMN"
-  val LOWER_BOUND = "LB"
-  val BEST_GUESS = "BG"
-  val UPPER_BOUND = "UB"
 
   def annotate(dataset:DataFrame): DataFrame =
   {
@@ -41,7 +38,7 @@ object RangeCaveats
       annotated,
       RowEncoder(
         plan.schema.add(
-          ANNOTATION_COLUMN,
+          ANNOTATION_ATTRIBUTE,
           annotationStruct(plan.schema),
           false
         )
@@ -51,13 +48,13 @@ object RangeCaveats
 
   def annotate(plan:LogicalPlan): LogicalPlan =
   {
-    return RangeAnnotatePlan(plan)
+    return CaveatRangePlan(plan)
   }
 
   def allAttributeAnnotationsExpression: Expression =
     UnresolvedExtractValue(
-      UnresolvedAttribute(ANNOTATION_COLUMN),
-      Literal(COLUMN_ANNOTATION),
+      UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+      Literal(ATTRIBUTE_FIELD),
     )
 
   def attributeAnnotationExpression(attr: Attribute): Expression =
@@ -68,14 +65,14 @@ object RangeCaveats
 
   def rowAnnotationExpression: Expression =
     UnresolvedExtractValue(
-      UnresolvedAttribute(ANNOTATION_COLUMN),
-      Literal(ROW_ANNOTATION)
+      UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+      Literal(ROW_FIELD)
     )
 
   def lbExpression(e: Expression): Expression =
     UnresolvedExtractValue(
       e,
-      Literal(LOWER_BOUND)
+      Literal(LOWER_BOUND_FIELD)
     )
 
   def bgAttrExpression(a: Attribute): Expression =
@@ -84,46 +81,45 @@ object RangeCaveats
   def bgRowExpression(e: Expression): Expression =
     UnresolvedExtractValue(
       e,
-      Literal(BEST_GUESS)
+      Literal(BEST_GUESS_FIELD)
     )
 
   def ubExpression(e: Expression): Expression =
     UnresolvedExtractValue(
       e,
-      Literal(UPPER_BOUND)
+      Literal(UPPER_BOUND_FIELD)
     )
 
   /**
     *  Schema of the caveat column is:
-    *  ROW_ANNOTATION
-    *      LOWER_BOUND
-    *      BEST_GUESS
-    *      UPPER_BOUND
-    *  COLUMN_ANNOTATION
+    *  ROW_FIELD
+    *      LOWER_BOUND_FIELD
+    *      BEST_GUESS_FIELD
+    *      UPPER_BOUND_FIELD
+    *  ATTRIBUTE_FIELD
     *      A1
-    *           LOWER_BOUND
-    *           UPPER_BOUND
+    *           LOWER_BOUND_FIELD
+    *           UPPER_BOUND_FIELD
     *      ...
     *      An
-    *           LOWER_BOUND
-    *           UPPER_BOUND
+    *           LOWER_BOUND_FIELD
+    *           UPPER_BOUND_FIELD
     */
   def annotationStruct(baseSchema:StructType): StructType =
   {
     StructType(Seq(
-      StructField(ROW_ANNOTATION,
+      StructField(ROW_FIELD,
         StructType(Seq(
-          StructField(LOWER_BOUND,IntegerType, false),
-          StructField(BEST_GUESS,IntegerType, false),
-          StructField(UPPER_BOUND,IntegerType, false)
+          StructField(LOWER_BOUND_FIELD,IntegerType, false),
+          StructField(BEST_GUESS_FIELD,IntegerType, false),
+          StructField(UPPER_BOUND_FIELD,IntegerType, false)
         )), false),
-      StructField(COLUMN_ANNOTATION, StructType(
+      StructField(ATTRIBUTE_FIELD, StructType(
         baseSchema.fields.map { x =>
           StructField(x.name,
             StructType(Seq(
-              StructField(LOWER_BOUND, x.dataType, false),
-//              StructField(BEST_GUESS, _.dataType, false),
-              StructField(UPPER_BOUND, x.dataType, false)
+              StructField(LOWER_BOUND_FIELD, x.dataType, false),
+              StructField(UPPER_BOUND_FIELD, x.dataType, false)
             ))
           )
         }
