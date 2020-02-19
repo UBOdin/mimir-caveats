@@ -6,7 +6,7 @@ import org.apache.spark.sql.catalyst.expressions._
 class ColumnImplicits(col: Column)
 {
   def caveat(message: Column, family: String)(key: Column*): Column =
-    new Column(Caveat(
+    new Column(ApplyCaveat(
       value = col.expr,
       message = message.expr,
       family = Some(family),
@@ -14,13 +14,13 @@ class ColumnImplicits(col: Column)
     ))
 
   def caveat(message: Column): Column =
-    new Column(Caveat(
+    new Column(ApplyCaveat(
       value = col.expr,
       message = message.expr
     ))
 
   def caveat(message: String): Column =
-    new Column(Caveat(
+    new Column(ApplyCaveat(
       value = col.expr,
       message = Literal(message)
     ))

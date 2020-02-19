@@ -1,4 +1,4 @@
-package org.mimirdb.caveats
+package org.mimirdb.caveats.annotate
 
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
