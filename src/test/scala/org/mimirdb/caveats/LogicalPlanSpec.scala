@@ -7,6 +7,7 @@ import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
 import org.apache.spark.sql.functions._
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.caveats.implicits._
+import org.mimirdb.caveats.annotate._
 
 class LogicalPlanSpec 
   extends Specification 
@@ -29,7 +30,7 @@ class LogicalPlanSpec
 
   def annotate[T](input: DataFrame, trace: Boolean = false)( op : Seq[(Boolean, Map[String,Boolean])] => T) =
   {
-    val annotated = Caveats.annotate(input, trace = trace)
+    val annotated = Caveats.annotate(input, CaveatExists(trace = trace))
     if(trace){
       println("------ FINAL ------")
       println(annotated.queryExecution.analyzed)
