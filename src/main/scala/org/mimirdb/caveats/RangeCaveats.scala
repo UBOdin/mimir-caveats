@@ -31,12 +31,27 @@ object RangeCaveats
 
   def annotate(dataset:DataFrame): DataFrame =
   {
-    return dataset
+    val execState = dataset.queryExecution
+    val plan = execState.analyzed
+    val annotated = annotate(plan)
+    val baseSchema = plan.schema
+
+    return new DataFrame(
+      execState.sparkSession,
+      annotated,
+      RowEncoder(
+        plan.schema.add(
+          ANNOTATION_COLUMN,
+          annotationStruct(plan.schema),
+          false
+        )
+      )
+    )
   }
 
   def annotate(plan:LogicalPlan): LogicalPlan =
   {
-    return AnnotatePlan(plan) //TODO write range rewrites
+    return RangeAnnotatePlan(plan)
   }
 
   def allAttributeAnnotationsExpression: Expression =
@@ -64,7 +79,7 @@ object RangeCaveats
     )
 
   def bgAttrExpression(a: Attribute): Expression =
-    a // do we want this to work like this?
+    a //TODO do we want this to work like this?
 
   def bgRowExpression(e: Expression): Expression =
     UnresolvedExtractValue(
@@ -78,6 +93,21 @@ object RangeCaveats
       Literal(UPPER_BOUND)
     )
 
+  /**
+    *  Schema of the caveat column is:
+    *  ROW_ANNOTATION
+    *      LOWER_BOUND
+    *      BEST_GUESS
+    *      UPPER_BOUND
+    *  COLUMN_ANNOTATION
+    *      A1
+    *           LOWER_BOUND
+    *           UPPER_BOUND
+    *      ...
+    *      An
+    *           LOWER_BOUND
+    *           UPPER_BOUND
+    */
   def annotationStruct(baseSchema:StructType): StructType =
   {
     StructType(Seq(

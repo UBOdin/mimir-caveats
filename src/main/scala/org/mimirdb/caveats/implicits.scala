@@ -29,12 +29,13 @@ class ColumnImplicits(col: Column)
 class DataFrameImplicits(df:DataFrame)
 {
   def annotate = Caveats.annotate(df)
+  def rangeAnnotate = RangeCaveats.annotate(df)
 }
 
 object implicits
 {
-  implicit def columnImplicits(col: Column): ColumnImplicits = 
+  implicit def columnImplicits(col: Column): ColumnImplicits =
     new ColumnImplicits(col)
-  implicit def dataFrameImplicits(df: DataFrame): DataFrameImplicits = 
+  implicit def dataFrameImplicits(df: DataFrame): DataFrameImplicits =
     new DataFrameImplicits(df)
 }

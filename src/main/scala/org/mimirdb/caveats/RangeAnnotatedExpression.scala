@@ -51,8 +51,11 @@ object RangeAnnotateExpression
     // an input attribute has a caveat.
     expr match {
 
-      // For caveat expression (obviously) is always caveated
-      case caveat: RangeCaveat => (Literal(caveat.lb), Literal(caveat.value), Literal(caveat.ub))
+      // Access value and bounds stored in Caveat
+      case caveat: RangeCaveat => (caveat.lb, caveat.value, caveat.ub)
+
+      // the bounds of a Literal are itself
+      case l: Literal => (l,l,l)
 
       // Attributes are caveatted if they are caveated in the input.
       case a: Attribute => (RangeCaveats.lbExpression(RangeCaveats.attributeAnnotationExpression(a)),
@@ -66,31 +69,16 @@ object RangeAnnotateExpression
       // Arithemic
       case Add(left,right) => liftPointwise(expr)
 
-      case Subtract(left,right) => liftPointwise(expr)
+      case Subtract(left,right) => {
+        val (llb, lbg, lub) = apply(left)
+        val (rlb, rbg, rub) = apply(right)
+
+        (Subtract(llb,rub),expr,Subtract(rub,llb))
+      }
 
       case Multiply(left,right) => minMaxAcrossAllCombinations(Multiply(left,right))
-      //   {
-      //   val (llb, lbg, lub) = apply(left)
-      //   val (rlb, rbg, rub) = apply(right)
-
-      //   (
-      //     Least(Multiply(llb,rlb),Multiply(llb,rub),Multiply(lub,rlb),Multiply(lub,rub)),
-      //     Multiply(left,right),
-      //     Greatest(Multiply(llb,rlb),Multiply(llb,rub),Multiply(lub,rlb),Multiply(lub,rub))
-      //   )
-      // }
 
       case Divide(left,right) =>  minMaxAcrossAllCombinations(Divide(left,right))
-      //   {
-      //   val (llb, lbg, lub) = apply(left)
-      //   val (rlb, rbg, rub) = apply(right)
-
-      //   (
-      //     Least(Division(llb,rlb),Division(llb,rub),Division(lub,rlb),Division(lub,rub)),
-      //     Division(left,right),
-      //     Greatest(Division(llb,rlb),Division(llb,rub),Division(lub,rlb),Division(lub,rub))
-      //   )
-      // }
 
       // conditional
       case If(predicate, thenClause, elseClause) =>
@@ -101,6 +89,7 @@ object RangeAnnotateExpression
           val certainTrue = isCertainTrue(cav_predicate)
           val certainFalse = isCertainFalse(cav_predicate)
 
+          //TODO for certain conditions we can omit the third clause. Add inference for detecting whether an expression's value will be certain
           (
             // If certainly true or false then only the then or else clause matters
             // otherwise we have to take the minimum or maximum over then and else
@@ -166,6 +155,18 @@ object RangeAnnotateExpression
   {
     val (lb,bg,ub) = apply(expr)
     (Alias(lb, expr.name)(), Alias(bg, expr.name)(), Alias(ub, expr.name)())
+  }
+
+  // map a triple of boooleans into a triple of Int (Row annotations)
+  def booleanToRowAnnotation(cond: (Expression, Expression, Expression)): (Expression, Expression, Expression) =
+  {
+    cond match { case (lb,bg,ub) =>
+      (boolToInt(lb), boolToInt(bg), boolToInt(ub))
+    }
+  }
+
+  private def boolToInt(bool: Expression): Expression = {
+    If(EqualTo(bool, Literal(true)), Literal(1), Literal(0))
   }
 
   // recursive function to deal with CASE WHEN clauses. For CASE WHEN (p1 o1) (p2 o2) ... e,
@@ -258,9 +259,6 @@ object RangeAnnotateExpression
       case _ => Not(e)
     }
 
-  private def foldOr(e:Expression*) = fold(e, false)
-  private def foldAnd(e:Expression*) = fold(e, true)
-
   private def liftPointwise(e:Expression) =
   {
       val caveatedChildren = e.children.map { apply(_) }
@@ -279,23 +277,4 @@ object RangeAnnotateExpression
   private def getUB(e:(Expression,Expression,Expression)): Expression =
     e._3
 
-  private def fold(
-    conditions: Seq[Expression],
-    disjunctive: Boolean = true
-  ): Expression =
-    conditions.filter { !_.equals(Literal(!disjunctive)) } match {
-      // Non-caveatted node.
-      case Seq() => Literal(!disjunctive)
-
-      // One potential caveat.
-      case Seq(condition) => condition
-
-      // Always caveatted node
-      case c if c.exists { _.equals(Literal(disjunctive)) } => Literal(disjunctive)
-
-      // Multiple potential caveats
-      case c =>
-        val op = (if(disjunctive) { Or(_,_) } else { And(_,_) })
-        c.tail.foldLeft(c.head) { op(_,_) }
-    }
 }
