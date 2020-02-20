@@ -17,6 +17,10 @@ import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
+/**
+  * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
+  * for a particular [AnnotationType].
+  */
 object Caveats
 {
 
@@ -41,7 +45,10 @@ object Caveats
    *                            correctness of the resulting annotations.
    * @return                    [dataset] extended with an annotation attribute
    **/
-  def annotate(dataset:DataFrame, annotator: AnnotationInstrumentationStrategy = defaultAnnotator): DataFrame =
+  def annotate(dataset:DataFrame,
+    annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+  ): DataFrame =
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
@@ -53,8 +60,8 @@ object Caveats
       annotated,
       RowEncoder(
         plan.schema.add(
-          ANNOTATION_ATTRIBUTE,
-          annotationStruct(plan.schema.fieldNames),
+          annotationAttribute,
+          annotator.annotationEncoding.annotationStruct(plan.schema.fieldNames),
           false
         )
       )
@@ -65,40 +72,4 @@ object Caveats
   }
 
 
-  def allAttributeAnnotationsExpression(
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ATTRIBUTE_FIELD)
-    )
-
-  def attributeAnnotationExpression(
-    attr: String,
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      allAttributeAnnotationsExpression(annotation),
-      Literal(attr)
-    )
-
-  def rowAnnotationExpression(
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ROW_FIELD)
-    )
-
-  def annotationStruct(fieldNames:Seq[String]): StructType =
-  {
-    StructType(Seq(
-      StructField(ROW_FIELD, BooleanType, false),
-      StructField(ATTRIBUTE_FIELD, StructType(
-        fieldNames.map {
-          StructField(_, BooleanType, false)
-        }
-      ), false)
-    ))
-  }
 }

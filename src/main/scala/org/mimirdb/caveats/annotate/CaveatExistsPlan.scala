@@ -252,8 +252,8 @@ class CaveatExistsPlan(
           // caveated, or if there is a caveated join condition
           row = foldOr(
             (Seq(
-              Caveats.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
-              Caveats.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
             ) ++ conditionAnnotation):_*
           ),
 
@@ -261,7 +261,7 @@ class CaveatExistsPlan(
           attributes =
             attributes.map { case (annotation, attr) =>
               attr.name ->
-                Caveats.attributeAnnotationExpression(attr.name, annotation)
+                CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name, annotation)
             },
 
           schema = plan.output,
@@ -584,14 +584,14 @@ class CaveatExistsPlan(
     )
 
     var rowAnnotation =
-      Caveats.rowAnnotationExpression()
+      CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
     if(row != null){
       rowAnnotation = Or(rowAnnotation, row)
     }
 
     var attributeAnnotations =
       schema.map { attribute =>
-        attribute.name -> Caveats.attributeAnnotationExpression(attribute.name)
+        attribute.name -> CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attribute.name)
       } ++ attributes
 
     buildAnnotation(
@@ -618,7 +618,7 @@ class CaveatExistsPlan(
 
     val realRowAnnotation: Expression =
       Option(row)
-        .getOrElse { Caveats.rowAnnotationExpression() }
+        .getOrElse { CaveatExistsBooleanArrayEncoding.rowAnnotationExpression() }
 
     val realAttributeAnnotations: Expression =
       Option(attributes)
@@ -629,7 +629,7 @@ class CaveatExistsPlan(
             attributes.flatMap { case (a, b) => Seq(Literal(a),b) }
           )
         }
-        .getOrElse { Caveats.allAttributeAnnotationsExpression() }
+        .getOrElse { CaveatExistsBooleanArrayEncoding.allAttributeAnnotationsExpression() }
 
     Alias(
       CreateNamedStruct(Seq(
