@@ -2,6 +2,7 @@ package org.mimirdb.caveats
 
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
+import org.mimirdb.caveats.annotate.AnnotationException
 
 class ColumnImplicits(col: Column)
 {
@@ -29,6 +30,30 @@ class ColumnImplicits(col: Column)
 class DataFrameImplicits(df:DataFrame)
 {
   def annotate = Caveats.annotate(df)
+
+  def isAnnotated = 
+    df.queryExecution
+      .analyzed
+      .output
+      .map { _.name }
+      .exists { _.equals(Constants.ANNOTATION_ATTRIBUTE) }
+
+  def assertAnnotated
+  {
+    if(!isAnnotated) throw new AnnotationException("You need to call df.annotate first")
+  }
+
+  def rowCaveatted =
+  {
+    assertAnnotated
+    new Column(Caveats.rowAnnotationExpression())
+  }
+
+  def colCaveatted(col: String) =
+  {
+    assertAnnotated
+    new Column(Caveats.attributeAnnotationExpression(col))
+  }
 }
 
 object implicits

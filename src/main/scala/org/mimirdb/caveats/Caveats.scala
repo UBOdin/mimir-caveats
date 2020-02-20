@@ -101,4 +101,8 @@ object Caveats
       ), false)
     ))
   }
+
+  def planIsAnnotated(plan: LogicalPlan): Boolean =
+    plan.output.map { _.name }.exists { _.equals(ANNOTATION_ATTRIBUTE) }
+
 }

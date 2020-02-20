@@ -11,9 +11,11 @@ object expressionLogic
     e.collect[Attribute] { case a: Attribute => a }.toSet
   }
 
-  def negate(e: Expression) = 
+  def negate(e: Expression): Expression = 
     e match {
       case Not(n) => n
+      case Or(l, r) => And(negate(l), negate(r))
+      case And(l, r) => Or(negate(l), negate(r))
       case Literal(x, BooleanType) => Literal(!x.asInstanceOf[Boolean])
       case _ => Not(e)
     }
@@ -27,23 +29,28 @@ object expressionLogic
     }
 
   def aggregateBoolOr(e:Expression) =
-    GreaterThan(
-      AggregateExpression(
-        Sum(foldIf(e){ Literal(1) }{ Literal(0) }),
-        Complete,
-        false,
-        NamedExpression.newExprId
-      ),
-      Literal(0)
-    )
+    e match {
+      case Literal(false, BooleanType) => Literal(false)
+      case _ => 
+        GreaterThan(
+          AggregateExpression(
+            Sum(foldIf(e){ Literal(1) }{ Literal(0) }),
+            Complete,
+            false,
+            NamedExpression.newExprId
+          ),
+          Literal(0)
+        )
+    }
 
   def inline(e: Expression, projectionList: Seq[NamedExpression]): Expression =
     inline(e, projectionList.map { expr => expr.name -> expr }.toMap)
 
   def inline(e: Expression, replacements: Map[String,Expression]): Expression =
   {
-    e.transform { 
+    e match { 
       case a:Attribute => replacements(a.name)
+      case _ => e.mapChildren { inline(_, replacements) }
     }
   }
 

@@ -4,7 +4,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.plans.{ JoinType, Cross }
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
 
@@ -15,9 +15,11 @@ import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.spark.expressionLogic.{
   foldOr, 
+  foldAnd, 
   foldIf,
   attributesOfExpression,
-  aggregateBoolOr
+  aggregateBoolOr,
+  negate
 }
 
 class CaveatExistsPlan(
@@ -62,7 +64,7 @@ class CaveatExistsPlan(
     val ret: LogicalPlan = plan match {
 
       /*********************************************************/
-      case _ if planIsAnnotated(plan) => plan
+      case _ if Caveats.planIsAnnotated(plan) => plan
 
       /*********************************************************/
       case _:ReturnAnswer => 
@@ -373,18 +375,20 @@ class CaveatExistsPlan(
         val annotatedChild = apply(child)
         val groupingAttributes =
           groupingExpressions.flatMap { attributesOfExpression(_) }.toSet
-        val aGroupingAttributeIsCaveated = 
-          if(!groupingAttributes.isEmpty){
-            foldOr((
-              EnumeratePlanCaveats(child)(
-                fields = groupingAttributes.map { _.name }
-              ).map { caveatSet => Not(caveatSet.isEmptyExpression) }
-            ):_*)
-          } else { Literal(false) }
-        val groupMembershipDependsOnACaveat =
-          foldOr(groupingExpressions.map { annotateAggregate(_) }:_*)
 
-        val rowAnnotation = groupMembershipDependsOnACaveat
+        val groupMembershipDependsOnACaveat =
+          foldOr(groupingExpressions.map { annotateExpression(_) }:_*)
+
+        val groupIsGuaranteedToHaveRows =
+          aggregateBoolOr(
+            foldAnd(
+              negate(Caveats.rowAnnotationExpression()),
+              negate(groupMembershipDependsOnACaveat)
+            )
+          )
+
+        val rowAnnotation = negate(groupIsGuaranteedToHaveRows)
+
 
 
         val attrAnnotations = 
@@ -396,10 +400,15 @@ class CaveatExistsPlan(
             // Additionally, 
             // TODO: refine this so that group-by attributes don't get annotated
             // TODO: move grouping caveats out to table-level?
-            aggr.name -> foldOr(
-                           annotateAggregate(aggr), 
-                           groupMembershipDependsOnACaveat
-                         )
+            aggr.name ->  foldOr(
+                            annotateAggregate(aggr), 
+                            aggregateBoolOr(
+                              foldOr(
+                                groupMembershipDependsOnACaveat,
+                                Caveats.rowAnnotationExpression()
+                              )
+                            )
+                          )
           }
 
         val annotation = 
@@ -409,11 +418,44 @@ class CaveatExistsPlan(
             attributes = attrAnnotations
           )
 
-        Aggregate(
-          groupingExpressions,
-          aggregateExpressions :+ annotation,
-          apply(annotatedChild)
-        )
+        val ret = 
+          Aggregate(
+            groupingExpressions,
+            aggregateExpressions :+ annotation,
+            annotatedChild
+          )
+
+        // If we're being pedantic, than a caveatted group-by could be 
+        // hypothetically placed into ANY group, contaminating all attribute
+        // annotations.
+        if(pedantic && !groupMembershipDependsOnACaveat.equals(Literal(false))){
+          val CONTAMINATED_GROUPS = ANNOTATION_ATTRIBUTE+"_EXIST_IN_GROUPBY"
+          val join = 
+            Join(
+              Aggregate(Seq(),
+                Seq(Alias(aggregateBoolOr(groupMembershipDependsOnACaveat),
+                          CONTAMINATED_GROUPS)()),
+                annotatedChild
+              ),
+              ret,
+              Cross,
+              None
+            )
+          Project(
+            plan.output :+ buildAnnotation(
+              plan = join,
+              attributes = 
+                plan.output.map { attr => 
+                    attr.name -> 
+                      foldOr(
+                        Caveats.attributeAnnotationExpression(attr.name),
+                        UnresolvedAttribute(CONTAMINATED_GROUPS)
+                      )
+                 }
+            ),
+            join
+          )
+        } else { ret }
       }
 
       /*********************************************************/
@@ -593,7 +635,7 @@ class CaveatExistsPlan(
   ): NamedExpression = 
   {
     assert(
-      ((row != null) && (!attributes.isEmpty)) || planIsAnnotated(plan)
+      ((row != null) && (!attributes.isEmpty)) || Caveats.planIsAnnotated(plan)
     )
 
     var rowAnnotation = 
@@ -614,9 +656,6 @@ class CaveatExistsPlan(
     )
   }
 
-  def planIsAnnotated(plan: LogicalPlan): Boolean =
-      plan.output.map { _.name }.exists { _.equals(ANNOTATION_ATTRIBUTE) }
-
   def buildAnnotation(
     plan: LogicalPlan,
     row: Expression = null, 
@@ -626,7 +665,7 @@ class CaveatExistsPlan(
     // If we're being asked to propagate existing caveats, we'd better
     // be seeing an annotation in the input schema
     assert(
-      ((row != null) && (attributes != null)) || planIsAnnotated(plan)
+      ((row != null) && (attributes != null)) || Caveats.planIsAnnotated(plan)
     )
 
     val realRowAnnotation: Expression =

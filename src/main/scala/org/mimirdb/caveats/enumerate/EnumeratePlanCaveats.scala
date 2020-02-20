@@ -98,6 +98,8 @@ object EnumeratePlanCaveats
     def PASS_THROUGH_TO_CHILD(u: UnaryNode) = 
       recurPlan(row, fields, sort, u.child)
 
+    // println(s"ENUMERATING($row, $fields, $sort)\n$plan")
+    
     plan match {
 
       /*********************************************************/
@@ -480,6 +482,8 @@ object EnumeratePlanCaveats
       /*********************************************************/
       case l:LeafNode => Seq()
     }
+
+
   }
 
   def mergeVerticalSlices(
