@@ -11,13 +11,14 @@ object EnumerateExpressionCaveats
   def apply(
     plan: LogicalPlan, 
     expression: Expression, 
-    condition: Expression
+    vSlice: Expression,
+    aggregates: AggregateInteraction.T = AggregateInteraction.IGNORE
   ): Seq[CaveatSet] =
   {
 
-    ExpressionDependency(expression){ condition => {
+    ExpressionDependency(expression, vSlice, aggregates){ localVSlice => {
       case applyCaveat: ApplyCaveat => 
-        applyCaveat.onPlan(Filter(condition, plan))
+        applyCaveat.onPlan(Filter(localVSlice, plan))
     }}
   }
 }

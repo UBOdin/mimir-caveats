@@ -37,6 +37,24 @@ object expressionLogic
       Literal(0)
     )
 
+  def inline(e: Expression, projectionList: Seq[NamedExpression]): Expression =
+    inline(e, projectionList.map { expr => expr.name -> expr }.toMap)
+
+  def inline(e: Expression, replacements: Map[String,Expression]): Expression =
+  {
+    e.transform { 
+      case a:Attribute => replacements(a.name)
+    }
+  }
+
+  def isAggregate(e: Expression): Boolean =
+  {
+    e match { 
+      case _:AggregateExpression => true
+      case _ => e.children.exists { isAggregate(_) }
+    }
+  }
+
   private def fold(
     conditions: Seq[Expression], 
     disjunctive: Boolean = true
@@ -56,4 +74,20 @@ object expressionLogic
         val op = (if(disjunctive) { Or(_,_) } else { And(_,_) })
         c.tail.foldLeft(c.head) { op(_,_) }
     }
+
+  def splitAnd(condition: Expression): Seq[Expression] = {
+    condition match {
+      case And(cond1, cond2) =>
+        splitAnd(cond1) ++ splitAnd(cond2)
+      case other => other :: Nil
+    }
+  }
+
+  def splitOr(condition: Expression): Seq[Expression] = {
+    condition match {
+      case Or(cond1, cond2) =>
+        splitOr(cond1) ++ splitOr(cond2)
+      case other => other :: Nil
+    }
+  }
 }

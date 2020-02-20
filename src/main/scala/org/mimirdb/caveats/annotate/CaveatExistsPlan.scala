@@ -485,7 +485,14 @@ class CaveatExistsPlan(
       /*********************************************************/
       case Distinct(child: LogicalPlan) => 
       {
-        ???
+        /*
+          Return distinct records (i.e., toSet)
+          
+          We can no longer treat this as a normal distinct, since the annotation
+          is a dependent attribute.  Convert to a (trivial) aggregate and 
+          rewrite that.
+        */
+        apply(Aggregate(child.output, child.output, child))
       }
 
       /*********************************************************/
@@ -506,7 +513,7 @@ class CaveatExistsPlan(
       /*********************************************************/
       case OneRowRelation() => 
       {
-        ???
+        PLAN_IS_FREE_OF_CAVEATS
       }
 
       /*********************************************************/
