@@ -40,12 +40,13 @@ class LogicalPlanSpec
        .collect()
        .map { row =>
          val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
+         val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
          (
            annotation.getAs[Boolean](ROW_FIELD),
-           annotation.schema
+           attributes.schema
                      .fields
                      .map { _.name }
-                     .map { name => name -> annotation.getAs[Boolean](name) }
+                     .map { name => name -> attributes.getAs[Boolean](name) }
                      .toMap
          )
        }
@@ -79,6 +80,16 @@ class LogicalPlanSpec
           .groupBy($"A").sum("B")
       ) { annotations =>
         annotations.map { _._1 } must be equalTo(Seq(false, false, false))
+      }
+    }
+
+    "support order by/limit without caveats" >> {
+      annotate(
+        df.sort( $"A" )
+          .limit(2)
+      ) { annotations =>
+        annotations.map { _._1 } must be equalTo(Seq(false, false))
+        annotations.map { _._2("B") } must be equalTo(Seq(false, false))
       }
     }
 

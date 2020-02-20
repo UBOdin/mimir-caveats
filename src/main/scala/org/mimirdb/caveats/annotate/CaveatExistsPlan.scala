@@ -456,19 +456,29 @@ class CaveatExistsPlan(
       /*********************************************************/
       case GlobalLimit(limitExpr: Expression, child: LogicalPlan) => 
       {
-        ???
+        val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
+        extendPlan(
+          GlobalLimit(limitExpr, apply(child)),
+          plan.output,
+          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+        )
       }
 
       /*********************************************************/
       case LocalLimit(limitExpr: Expression, child: LogicalPlan) => 
       {
-        ???
+        val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
+        extendPlan(
+          GlobalLimit(limitExpr, apply(child)),
+          plan.output,
+          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+        )
       }
 
       /*********************************************************/
       case SubqueryAlias(identifier: AliasIdentifier, child: LogicalPlan) => 
       {
-        ???
+        PASS_THROUGH_CAVEATS
       }
 
       /*********************************************************/

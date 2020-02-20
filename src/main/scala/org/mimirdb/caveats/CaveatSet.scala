@@ -5,6 +5,8 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.mimirdb.spark.sparkWorkarounds._
+import org.mimirdb.spark.expressionLogic.negate
+
 
 abstract class CaveatSet
 {
@@ -12,6 +14,7 @@ abstract class CaveatSet
   def take(ctx: SparkSession, n: Int): Seq[Caveat]
   def isEmpty(ctx: SparkSession): Boolean
   def isEmptyExpression: Expression
+  def isNonemptyExpression = negate(isEmptyExpression)
 }
 
 

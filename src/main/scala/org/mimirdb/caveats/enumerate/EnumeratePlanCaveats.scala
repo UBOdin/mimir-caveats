@@ -419,6 +419,57 @@ object EnumeratePlanCaveats
       }
 
       /*********************************************************/
+      case GlobalLimit(limitExpr: Expression, child: LogicalPlan) => 
+      {
+        val localCaveats = 
+          row.map { EnumerateExpressionCaveats(plan, limitExpr, _) }
+             .getOrElse { Seq[CaveatSet]() }
+
+        val fieldDependenciesToPropagate =
+          mergeVerticalSlices(
+            row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
+               .getOrElse { Seq[(String,Expression)]() } ++
+            fields.toSeq
+          )
+
+        val childCaveats = recurPlan(
+          row = row,
+          fields = fieldDependenciesToPropagate,
+          sort = sort,
+          plan = child
+        )
+
+        return localCaveats ++ childCaveats
+      }
+
+      /*********************************************************/
+      case LocalLimit(limitExpr: Expression, child: LogicalPlan) => 
+      {
+        val localCaveats = 
+          row.map { EnumerateExpressionCaveats(plan, limitExpr, _) }
+             .getOrElse { Seq[CaveatSet]() }
+
+        val fieldDependenciesToPropagate =
+          mergeVerticalSlices(
+            row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
+               .getOrElse { Seq[(String,Expression)]() } ++
+            fields.toSeq
+          )
+
+        val childCaveats = recurPlan(
+          row = row,
+          fields = fieldDependenciesToPropagate,
+          sort = sort,
+          plan = child
+        )
+
+        return localCaveats ++ childCaveats
+      }
+
+      /*********************************************************/
+      case x:SubqueryAlias => PASS_THROUGH_TO_CHILD(x)
+
+      /*********************************************************/
       case Distinct(child) => recurPlan(
           row = row,
           fields = fields,
