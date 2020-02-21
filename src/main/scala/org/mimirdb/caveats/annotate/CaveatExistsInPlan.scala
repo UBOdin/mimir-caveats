@@ -14,8 +14,8 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.spark.expressionLogic.{
-  foldOr, 
-  foldAnd, 
+  foldOr,
+  foldAnd,
   foldIf,
   attributesOfExpression,
   aggregateBoolOr,
@@ -387,7 +387,7 @@ class CaveatExistsInPlan(
         val groupIsGuaranteedToHaveRows =
           aggregateBoolOr(
             foldAnd(
-              negate(Caveats.rowAnnotationExpression()),
+              negate(CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()),
               negate(groupMembershipDependsOnACaveat)
             )
           )
@@ -406,12 +406,12 @@ class CaveatExistsInPlan(
             // TODO: refine this so that group-by attributes don't get annotated
             // TODO: move grouping caveats out to table-level?
             aggr.name ->  foldOr(
-                            annotateAggregate(aggr), 
+                            annotateAggregate(aggr),
                             aggregateBoolOr(
                               if(isAggregate(aggr)){
                                 foldOr(
                                   groupMembershipDependsOnACaveat,
-                                  Caveats.rowAnnotationExpression()
+                                  CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
                                 )
                               } else { groupMembershipDependsOnACaveat }
                             )
@@ -425,19 +425,19 @@ class CaveatExistsInPlan(
             attributes = attrAnnotations
           )
 
-        val ret = 
+        val ret =
           Aggregate(
             groupingExpressions,
             aggregateExpressions :+ annotation,
             annotatedChild
           )
 
-        // If we're being pedantic, than a caveatted group-by could be 
+        // If we're being pedantic, than a caveatted group-by could be
         // hypothetically placed into ANY group, contaminating all attribute
         // annotations.
         if(pedantic && !groupMembershipDependsOnACaveat.equals(Literal(false))){
           val CONTAMINATED_GROUPS = ANNOTATION_ATTRIBUTE+"_EXIST_IN_GROUPBY"
-          val join = 
+          val join =
             Join(
               Aggregate(Seq(),
                 Seq(Alias(aggregateBoolOr(groupMembershipDependsOnACaveat),
@@ -451,11 +451,11 @@ class CaveatExistsInPlan(
           Project(
             plan.output :+ buildAnnotation(
               plan = join,
-              attributes = 
-                plan.output.map { attr => 
-                    attr.name -> 
+              attributes =
+                plan.output.map { attr =>
+                    attr.name ->
                       foldOr(
-                        Caveats.attributeAnnotationExpression(attr.name),
+                        CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name),
                         UnresolvedAttribute(CONTAMINATED_GROUPS)
                       )
                  }
@@ -546,9 +546,9 @@ class CaveatExistsInPlan(
       {
         /*
           Return distinct records (i.e., toSet)
-          
+
           We can no longer treat this as a normal distinct, since the annotation
-          is a dependent attribute.  Convert to a (trivial) aggregate and 
+          is a dependent attribute.  Convert to a (trivial) aggregate and
           rewrite that.
         */
         apply(Aggregate(child.output, child.output, child))

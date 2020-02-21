@@ -3,9 +3,10 @@ package org.mimirdb.caveats
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
-import org.mimirdb.caveats.annotate.{ 
-  AnnotationException, 
-  CaveatExistsInExpression 
+import org.mimirdb.caveats.annotate.{
+  AnnotationException,
+  CaveatExistsInExpression,
+  CaveatRangePlan
 }
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 
@@ -31,14 +32,14 @@ class ColumnImplicits(col: Column)
       message = Literal(message)
     ))
 
-  def hasCaveat: Column = 
+  def hasCaveat: Column =
     new Column(CaveatExistsInExpression(col.expr))
 }
 
 class DataFrameImplicits(df:DataFrame)
 {
   def trackCaveats = Caveats.annotate(df)
-  def rangeCaveats = RangeCaveats.annotate(df)
+  def rangeCaveats = Caveats.annotate(df, CaveatRangePlan)
   def listCaveatSets(
     row: Boolean = true,
     attributes: Set[String] = df.queryExecution
@@ -59,7 +60,7 @@ class DataFrameImplicits(df:DataFrame)
                                 .toSet
   ) = listCaveatSets(row, attributes).flatMap { _.all(df.sparkSession) }
 
-  def isAnnotated = 
+  def isAnnotated =
     df.queryExecution
       .analyzed
       .output
