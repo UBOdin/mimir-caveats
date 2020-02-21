@@ -23,7 +23,7 @@ import org.mimirdb.spark.expressionLogic.{
   isAggregate
 }
 
-class CaveatExistsPlan(
+class CaveatExistsInPlan(
   pedantic: Boolean = true,
   ignoreUnsupported: Boolean = false,
   trace: Boolean = false

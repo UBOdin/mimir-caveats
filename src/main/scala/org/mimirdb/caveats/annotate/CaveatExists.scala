@@ -6,7 +6,7 @@ object CaveatExists
     pedantic: Boolean = true,
     ignoreUnsupported: Boolean = false,
     trace: Boolean = false
-  ) = new CaveatExistsPlan(
+  ) = new CaveatExistsInPlan(
     pedantic = pedantic,
     ignoreUnsupported = ignoreUnsupported,
     trace = trace

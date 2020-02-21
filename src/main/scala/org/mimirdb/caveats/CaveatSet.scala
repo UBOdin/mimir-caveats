@@ -12,6 +12,7 @@ abstract class CaveatSet
 {
   def size(ctx: SparkSession): Long
   def take(ctx: SparkSession, n: Int): Seq[Caveat]
+  def all(ctx: SparkSession): Seq[Caveat]
   def isEmpty(ctx: SparkSession): Boolean
   def isEmptyExpression: Expression
   def isNonemptyExpression = negate(isEmptyExpression)
@@ -23,6 +24,7 @@ class SingletonCaveatSet(caveat: Caveat)
 {
   def size(ctx: SparkSession) = 1
   def take(ctx: SparkSession, n:Int) = if(n > 0){ Seq(caveat) } else { Seq() }
+  def all(ctx: SparkSession) = Seq(caveat)
   def isEmpty(ctx: SparkSession) = false
   def isEmptyExpression = Literal(false)
 }
@@ -40,6 +42,8 @@ class EnumerableCaveatSet(
     withContext(ctx) { _.count() }
   def take(ctx: SparkSession, n:Int) = 
     withContext(ctx) { _.take(n).map { Caveat(family, _) } }
+  def all(ctx: SparkSession) = 
+    withContext(ctx) { _.collect.map { Caveat(family, _) } }
   def isEmpty(ctx: SparkSession) = 
     withContext(ctx) { _.isEmpty }
   def isEmptyExpression = Exists(plan)

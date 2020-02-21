@@ -63,7 +63,7 @@ object EnumeratePlanCaveats
    *
    * The second batch of parameters identifies the target slice
    * @param  row        True to include row-level caveats
-   * @param  fields     Include attribute-level caveats for the specified fields
+   * @param  attributes Include attribute-level caveats for the specified attrs
    * @param  sort       True to include caveats affecting the sort order
    * 
    * @return            A set of [[CaveatSet]]s enumerating the caveats.
@@ -77,29 +77,29 @@ object EnumeratePlanCaveats
     plan: LogicalPlan
   )(
     row: Boolean = false,
-    fields: Set[String] = Set(),
+    attributes: Set[String] = Set(),
     sort: Boolean = false,
     constraint: Expression = Literal(true)
   ): Seq[CaveatSet] = 
     recurPlan(
       if(row){ Some(constraint) } else { None }, 
-      fields.map { _ -> constraint }.toMap, 
+      attributes.map { _ -> constraint }.toMap, 
       sort, 
       plan
     )
 
   def recurPlan(
     row: Option[Expression],
-    fields: Map[String,Expression],
+    attributes: Map[String,Expression],
     sort: Boolean,
     plan: LogicalPlan
   ): Seq[CaveatSet] = 
   {
     def PASS_THROUGH_TO_CHILD(u: UnaryNode) = 
-      recurPlan(row, fields, sort, u.child)
+      recurPlan(row, attributes, sort, u.child)
 
-    // println(s"ENUMERATING($row, $fields, $sort)\n$plan")
-    
+    // println(s"ENUMERATING($row, $attributes, $sort)\n$plan")
+
     plan match {
 
       /*********************************************************/
@@ -112,17 +112,17 @@ object EnumeratePlanCaveats
       case Project(projectList: Seq[NamedExpression], child: LogicalPlan) => 
       {
         val relevantProjections = 
-          projectList.filter { expr => fields contains expr.name }
+          projectList.filter { expr => attributes contains expr.name }
         val localCaveats = 
           relevantProjections.flatMap { projectExpression => 
-            val fieldVSlice = fields(projectExpression.name)
+            val fieldVSlice = attributes(projectExpression.name)
             EnumerateExpressionCaveats(child, projectExpression, fieldVSlice)
           }
         val allChildDependencies = 
           relevantProjections.flatMap { projectExpression => 
             ExpressionDependency.attributes(
               projectExpression, 
-              inline(fields(projectExpression.name), projectList)
+              inline(attributes(projectExpression.name), projectList)
             )
           }
         val childDependenciesByField = 
@@ -132,7 +132,7 @@ object EnumeratePlanCaveats
 
         val childCaveats = recurPlan(
           row = row.map { inline(_, projectList) },
-          fields = childDependenciesByField,
+          attributes = childDependenciesByField,
           sort = sort,
           plan = child
         )
@@ -153,7 +153,7 @@ object EnumeratePlanCaveats
         val generatedField = generatorOutput.map { _.name }.toSet
         val (sliceGeneratorFields, 
              sliceChildFields) = 
-                fields.partition { case (name, _) => generatedField(name) }
+                attributes.partition { case (name, _) => generatedField(name) }
 
         val simulatedProjectionList = 
           generatorOutput.map { attribute =>
@@ -188,7 +188,7 @@ object EnumeratePlanCaveats
         val generatorIsIrrelevant = 
           generatorVSlice.equals(Literal(false))
 
-        // If we're not interested in any generator fields, we don't care about
+        // If we're not interested in any generator attributes, we don't care about
         // caveats on the generator
         val generatorCaveats = 
           if(generatorIsIrrelevant){
@@ -210,7 +210,7 @@ object EnumeratePlanCaveats
 
         val childCaveats = recurPlan(
           row = row.map { inlineGeneratorFields(_) },
-          fields = fieldDependenciesToPropagate,
+          attributes = fieldDependenciesToPropagate,
           sort = sort,
           plan = child
         )
@@ -229,12 +229,12 @@ object EnumeratePlanCaveats
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(condition, _).toSeq }
                .getOrElse { Seq[(String,Expression)]() } ++
-            fields.toSeq
+            attributes.toSeq
           )
 
         val childCaveats = recurPlan(
           row = row,
-          fields = fieldDependenciesToPropagate,
+          attributes = fieldDependenciesToPropagate,
           sort = sort,
           plan = child
         )
@@ -248,7 +248,7 @@ object EnumeratePlanCaveats
         return children.flatMap { child =>
           recurPlan(
             row = row,
-            fields = fields,
+            attributes = attributes,
             sort = sort,
             plan = child
           )
@@ -271,13 +271,13 @@ object EnumeratePlanCaveats
             rowAndCondition.map { case (row, condition) => 
               ExpressionDependency.attributes(condition, row).toSeq 
             }.getOrElse { Seq[(String,Expression)]() } ++
-            fields.toSeq
+            attributes.toSeq
           )
 
         val isLeft = left.output.map { _.name }.toSet
         val isRight = right.output.map { _.name }.toSet
 
-        val (fieldsToPropagateLeft, fieldsToPropagateRight) =
+        val (attributesToPropagateLeft, attributesToPropagateRight) =
           fieldDependenciesToPropagate.partition { field => isLeft(field._1) }
 
         val rowPredicates = 
@@ -306,12 +306,12 @@ object EnumeratePlanCaveats
 
         return recurPlan(
                   row = rowSliceLeftMaybe,
-                  fields = fieldsToPropagateLeft,
+                  attributes = attributesToPropagateLeft,
                   sort = false, // Joins force a reorder
                   plan = left
                ) ++ recurPlan(
                   row = rowSliceRightMaybe,
-                  fields = fieldsToPropagateRight,
+                  attributes = attributesToPropagateRight,
                   sort = false, // Joins force a reorder
                   plan = left
                )
@@ -322,7 +322,7 @@ object EnumeratePlanCaveats
 
       /*********************************************************/
       case View(_, _, child) => 
-        recurPlan(row = row, fields = fields, sort = sort, plan = child)
+        recurPlan(row = row, attributes = attributes, sort = sort, plan = child)
 
       /*********************************************************/
       case Sort(order, _, child) =>
@@ -336,13 +336,13 @@ object EnumeratePlanCaveats
           if(sort) {
             mergeVerticalSlices(
               order.flatMap { ExpressionDependency.attributes(_) }.toSeq ++
-              fields.toSeq
+              attributes.toSeq
             )
-          } else { fields }
+          } else { attributes }
 
         val childCaveats = recurPlan(
           row = row,
-          fields = fieldDependenciesToPropagate,
+          attributes = fieldDependenciesToPropagate,
           sort = false, // sort is resolved
           plan = child
         )
@@ -377,7 +377,7 @@ object EnumeratePlanCaveats
         }
 
         val localCaveats = 
-          fields.flatMap { case (attribute, vSlice) =>  
+          attributes.flatMap { case (attribute, vSlice) =>  
             val expression = projections(attribute)
             val outsideCaveats = 
               EnumerateExpressionCaveats(
@@ -394,7 +394,7 @@ object EnumeratePlanCaveats
 
         val propagatedChildFields =
           mergeVerticalSlices(
-            fields.flatMap { case (attribute, vSlice) => 
+            attributes.flatMap { case (attribute, vSlice) => 
               // Should be safe to extract attributes without inlining since: 
               //  1. If the attribute is inside an aggregate, it's clearly 
               //     available in the child.
@@ -412,7 +412,7 @@ object EnumeratePlanCaveats
         val childCaveats =
           recurPlan(
             row = row.map { safeInlineAggregate(_) },
-            fields = propagatedChildFields,
+            attributes = propagatedChildFields,
             sort = false, // Aggregation breaks sort order
             plan = child
           )
@@ -431,12 +431,12 @@ object EnumeratePlanCaveats
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
                .getOrElse { Seq[(String,Expression)]() } ++
-            fields.toSeq
+            attributes.toSeq
           )
 
         val childCaveats = recurPlan(
           row = row,
-          fields = fieldDependenciesToPropagate,
+          attributes = fieldDependenciesToPropagate,
           sort = sort,
           plan = child
         )
@@ -455,12 +455,12 @@ object EnumeratePlanCaveats
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
                .getOrElse { Seq[(String,Expression)]() } ++
-            fields.toSeq
+            attributes.toSeq
           )
 
         val childCaveats = recurPlan(
           row = row,
-          fields = fieldDependenciesToPropagate,
+          attributes = fieldDependenciesToPropagate,
           sort = sort,
           plan = child
         )
@@ -474,7 +474,7 @@ object EnumeratePlanCaveats
       /*********************************************************/
       case Distinct(child) => recurPlan(
           row = row,
-          fields = fields,
+          attributes = attributes,
           sort = sort,
           plan = Aggregate(child.output, child.output, child)
         )

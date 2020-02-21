@@ -36,7 +36,7 @@ class ExpressionSpec
   {
     val wrapper =
       df.select(e)
-        .annotate
+        .trackCaveats
         .queryExecution
         .analyzed
         .asInstanceOf[Project]
