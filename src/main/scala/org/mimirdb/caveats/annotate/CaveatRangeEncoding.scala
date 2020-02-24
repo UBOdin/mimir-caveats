@@ -18,10 +18,13 @@ import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
 /**
-  * Encoding of RangeAnnotations which record for each attribute
+  * Encoding of [CaveatRangeType] annotation for which we record for each attribute
   * value an lower and upper bound across all possible worlds.
   * Furthermore, for each row we record and upper / lower bound on its
   * annotation (multiplicity) across all worlds.
+  *
+  *  Currently only top-level attributes are annotated. So this would not work
+  *  for attributes that are nested.
   **/
 object CaveatRangeEncoding
   extends AnnotationEncoding
@@ -87,6 +90,16 @@ object CaveatRangeEncoding
       allAttributeAnnotationsExpression(annotation),
       Literal(attrName)
     )
+
+  def rowLBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    lbExpression(rowAnnotationExpression(annotation))
+
+  def rowBGexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    bgRowExpression(rowAnnotationExpression(annotation))
+
+  def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    ubExpression(rowAnnotationExpression(annotation))
+
 
   def lbExpression(e: Expression): Expression =
     UnresolvedExtractValue(

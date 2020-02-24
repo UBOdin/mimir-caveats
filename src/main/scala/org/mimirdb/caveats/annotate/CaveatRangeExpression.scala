@@ -3,6 +3,12 @@ package org.mimirdb.caveats.annotate
 import org.apache.spark.sql.catalyst.expressions._
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.catalyst.analysis.{
+  UnresolvedExtractValue,
+  UnresolvedAttribute
+}
+
+
 import org.mimirdb.caveats._
 
 /**
@@ -59,9 +65,9 @@ object CaveatRangeExpression
       case l: Literal => (l,l,l)
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => (RangeCaveats.lbExpression(RangeCaveats.attributeAnnotationExpression(a)),
-        RangeCaveats.bgAttrExpression(a),
-        RangeCaveats.ubExpression(RangeCaveats.attributeAnnotationExpression(a))
+      case a: Attribute => (CaveatRangeEncoding.lbExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a)),
+        CaveatRangeEncoding.bgAttrExpression(a),
+        CaveatRangeEncoding.ubExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a))
       )
 
       // Not entirely sure how to go about handling subqueries yet
@@ -166,8 +172,47 @@ object CaveatRangeExpression
     }
   }
 
-  private def boolToInt(bool: Expression): Expression = {
+  // replace references to attribute bounds annotations based on a mapping from attribute to annotation attribute
+  // This is used for binary operators (join) where the Expression we are rewritting may refer to multiple children
+  def replaceAnnotationAttributeReferences(
+    e: Expression,
+    attrToAnnotAttr: Map[String,String])
+      : Expression =
+  {
+    e match {
+      case
+          UnresolvedExtractValue(
+            UnresolvedExtractValue(
+              UnresolvedAttribute(Seq(Constants.ANNOTATION_ATTRIBUTE)),
+              Literal(Constants.ATTRIBUTE_FIELD,StringType),
+            ),
+            Literal(attr:String,StringType)
+          )
+          => {
+            UnresolvedExtractValue(
+              UnresolvedExtractValue(
+                UnresolvedAttribute(attrToAnnotAttr(attr)),
+                Literal(Constants.ATTRIBUTE_FIELD),
+              ),
+              Literal(attr,StringType)
+            )
+          }
+      case x:Expression => {
+        x.withNewChildren(
+          x.children.map ( c =>
+          replaceAnnotationAttributeReferences(c, attrToAnnotAttr)
+          )
+        )
+      }
+    }
+  }
+
+  def boolToInt(bool: Expression): Expression = {
     If(EqualTo(bool, Literal(true)), Literal(1), Literal(0))
+  }
+
+  def neutralRowAnnotation() : (Expression, Expression, Expression) = {
+    (Literal(1), Literal(1), Literal(1))
   }
 
   // recursive function to deal with CASE WHEN clauses. For CASE WHEN (p1 o1) (p2 o2) ... e,
@@ -260,7 +305,19 @@ object CaveatRangeExpression
       case _ => Not(e)
     }
 
-  private def liftPointwise(e:Expression) =
+  def applyPointwiseToTuple3[In,Out](
+    f: In => Out,
+    input: (In, In, In))
+      : (Out, Out, Out) =
+  {
+    (
+      f(input._1),
+      f(input._2),
+      f(input._3)
+    )
+  }
+
+  def liftPointwise(e:Expression) =
   {
       val caveatedChildren = e.children.map { apply(_) }
       (e.withNewChildren(caveatedChildren.map(getLB)),

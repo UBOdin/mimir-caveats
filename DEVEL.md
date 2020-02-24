@@ -52,7 +52,7 @@ __CAVEATS: {
 }
 ```
 
-- we probably should implement an translation that duplicates tuples based on the BG
-  annotation
+- we probably should implement an translation that duplicates tuples based on the BG annotation before showing things to a user
 - currently this assumes that min (`least`) and (`max`) operations and comparisons are well-defined for the datatypes of attributes. We need a registry or `trait` to identify datatypes with a total order of their domain. For types that we do not know we should fall back to boolean annotations.
+- range annotations currently only operate on top-level attributes. This is missing some opportunity of dealing with nested attributes whose leaf children use ordered data types. We should consider allowing nesting of annotations.
 - eventually we should support multiple different encoding of annotations which means either going with Oliver's idea of a UDT that can encode annotations in multiple ways or make the rewrites have pluggable annotation handling components that abstract away the annotation handling part (e.g., the bitvector one will bit-and bitvectors when joining and things like this). The custom type will keep the rewriter simpler, but may add some overhead at runtime, but probably not enough to worry about.

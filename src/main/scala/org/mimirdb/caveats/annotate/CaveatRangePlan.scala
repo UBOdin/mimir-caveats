@@ -7,11 +7,22 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
 
+import org.apache.spark.sql.catalyst.plans._
+
 import com.typesafe.scalalogging.LazyLogging
 
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.Constants._
 
+/**
+  * Instrument a [LogicalPlan] to generate and propagate [CaveatRangeType] annotation.
+  * In the result produced by the rewritten plan every row is annotated with a triple
+  *  (lb,bg,ub) which records the minimum (lb) and maximum (ub) multiplicity of the
+  * tuple across all possible worlds. bg encodes the encodes the multiplicity of the tuple
+  *  in the selected best guess world. Furthermore, for each attribute A of the schema
+  *  of the input plan we record an upper and a lower bound on the value of this attribute
+  *  across all possible worlds.
+  */
 object CaveatRangePlan
   extends AnnotationInstrumentationStrategy
   with LazyLogging
@@ -43,6 +54,7 @@ object CaveatRangePlan
         */
         PASS_THROUGH_CAVEATS
       }
+
       case _:Subquery =>
       {
         /*
@@ -51,6 +63,7 @@ object CaveatRangePlan
         */
         PASS_THROUGH_CAVEATS
       }
+
       case Project(projectList: Seq[NamedExpression], child: LogicalPlan) =>
       {
         /*
@@ -77,6 +90,7 @@ object CaveatRangePlan
           rewrittenChild
         )
       }
+
       case Generate(
           generator: Generator,
           unrequiredChildIndex: Seq[Int],
@@ -101,14 +115,14 @@ object CaveatRangePlan
           rewrittenChild
         )
 
-        val projections = newFilter.output :+ buildAnnotation(
+        val projectionExprs = newFilter.output :+ buildAnnotation(
             plan = newFilter,
             rowAnnotation =
               CaveatRangeExpression.booleanToRowAnnotation(conditionB)
           )
 
         Project(
-          projections,
+          projectionExprs,
           newFilter
         )
       }
@@ -122,15 +136,12 @@ object CaveatRangePlan
       }
       case Union(children: Seq[LogicalPlan]) =>
       {
-        ???
+        val rewrittenChildren = children.map(apply)
+        Union(rewrittenChildren) //TODO should be fine?
       }
-      case Join(
-          left: LogicalPlan,
-          right: LogicalPlan,
-          joinType: JoinType,
-          condition: Option[Expression]) =>
+      case j: Join =>
       {
-        ???
+          rewriteJoin(j)
       }
       case InsertIntoDir(
           isLocal: Boolean,
@@ -153,6 +164,11 @@ object CaveatRangePlan
       {
         ???
       }
+      //TODO technically, we have to reason about all possible sort orders. If
+      //we materialize the position of a row as an attribute (and adapt parents
+      //accordingly) then this may work, the attribute annotation on this column
+      //would be the lowest and highest possible position of the tuple in sort
+      //order
       case Sort(order: Seq[SortOrder], global: Boolean, child: LogicalPlan) =>
       {
         ???
@@ -266,10 +282,161 @@ object CaveatRangePlan
     return ret
   }
 
+  /**
+    *  Dispatch to individual rewriters for join types
+    */
+  private def rewriteJoin(
+    plan: Join
+  ): LogicalPlan =
+    plan match {
+      case Join(left,right,Cross,c) => {
+        rewriteInnerJoin(plan)
+      }
+      case Join(left,right,Inner,c) => {
+        rewriteInnerJoin(plan)
+      }
+      case Join(left,right,ExistenceJoin(_),c) => { // need to be dealt with separatly?
+        ???
+      }
+      case Join(left,right,LeftOuter,c) => {
+        ???
+      }
+      case Join(left,right,RightOuter,c) => {
+        ???
+      }
+      case Join(left,right,FullOuter,c) => {
+        ???
+      }
+      case Join(left,right,LeftSemi,c) => {
+        ???
+      }
+      case Join(left,right,LeftAnti,c) => {
+        ???
+      }
+      case Join(left,right,UsingJoin(_,_),c) => {
+        ???
+      }
+      case Join(left,right,NaturalJoin(_),c) => { //need to match for subtypes (inner, or left, right, full outer)
+        ???
+      }
+    }
+
+  /** Instruments an inner join for range caveats.
+    *
+    *  @returns
+    */
+  private def rewriteInnerJoin(
+    plan: Join
+  ): LogicalPlan =
+    plan match { case Join(left,right,joinType,condition) =>
+      {
+          // rename the annotation attribute from the left and right input
+          val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
+          val RIGHT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE+"_RIGHT"
+          val rewrLeft = Project(
+            left.output :+ Alias(
+              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+              LEFT_ANNOT_ATTR)(),
+            apply(left)
+          )
+          val rewrRight = Project(
+            left.output :+ Alias(
+              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+              RIGHT_ANNOT_ATTR)(),
+            apply(right)
+          )
+
+          // store which attribute corresponds to which annotation attribute
+          val attrMap = (left.output.map( x => x.name -> LEFT_ANNOT_ATTR) ++
+                        right.output.map( x => x.name -> RIGHT_ANNOT_ATTR)).toMap
+
+          // rewrite condition
+          val conditionB = condition.map(CaveatRangeExpression.apply)
+
+          // if join condition is possibly true for a tuple pair, then we have to return the tuple pair
+          val rewrittenCondition = conditionB.map(x => x._3)
+
+          // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
+          val conditionBadapted = conditionB.map(x => x match {
+            case (lb,bg,ub) =>
+              (
+                CaveatRangeExpression.replaceAnnotationAttributeReferences(lb, attrMap),
+                CaveatRangeExpression.replaceAnnotationAttributeReferences(bg, attrMap),
+                CaveatRangeExpression.replaceAnnotationAttributeReferences(ub, attrMap)
+              )
+          }
+          )
+
+          // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
+          val annotConditionToRow :(Expression,Expression,Expression) = conditionBadapted.map(x =>
+            CaveatRangeExpression.applyPointwiseToTuple3(
+              CaveatRangeExpression.boolToInt,
+              x)
+          ).getOrElse(CaveatRangeExpression.neutralRowAnnotation)
+
+          // non-annotation attributes
+          val attributes =
+            left.output.map  { (LEFT_ANNOT_ATTR, _)  } ++
+            right.output.map { (RIGHT_ANNOT_ATTR, _) }
+
+          // join rewritten inputs after renaming the join attribute
+          val rewrittenJoin = Join(rewrLeft,
+            rewrRight,
+            joinType,
+            rewrittenCondition)
+
+          // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
+          val rowAnnotations = (
+            Multiply(
+              Multiply(
+                CaveatRangeEncoding.rowLBexpression(LEFT_ANNOT_ATTR),
+                CaveatRangeEncoding.rowLBexpression(RIGHT_ANNOT_ATTR)
+              ),
+              annotConditionToRow._1
+            ),
+            Multiply(
+              Multiply(
+                CaveatRangeEncoding.rowBGexpression(LEFT_ANNOT_ATTR),
+                CaveatRangeEncoding.rowUBexpression(RIGHT_ANNOT_ATTR)
+              ),
+              annotConditionToRow._2
+            ),
+            Multiply(
+              Multiply(
+                CaveatRangeEncoding.rowUBexpression(LEFT_ANNOT_ATTR),
+                CaveatRangeEncoding.rowUBexpression(RIGHT_ANNOT_ATTR)
+              ),
+              annotConditionToRow._3
+            )
+          )
+
+          val annotations = buildAnnotation(
+            plan = rewrittenJoin,
+            rowAnnotation = rowAnnotations,
+            colAnnotations = null //TODO
+          )
+
+          // calculate multiplicities
+          Project(
+            rewrittenJoin.output :+ annotations,
+            rewrittenJoin
+          )
+      }
+    }
+
+
+  /** Build up a value of the nested annotation attribute from its components.
+   *
+   *  @param plan the operator whose schema we are annotating
+   *  @param rowAnnotation the multiplicity annotation for the row
+   *  @param colAnnotations the annotations for all columns of the result schema of [plan]
+   *  @param annotationAttr the name of the annotation attribute for the plan (input)
+   */
   def buildAnnotation(
     plan: LogicalPlan,
     rowAnnotation: (Expression, Expression, Expression) = null,
-    colAnnotations: Seq[(String, (Expression,Expression))] = null
+    colAnnotations: Seq[(String, (Expression,Expression))] = null,
+    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE
   ): NamedExpression =
   {
     val columns = plan.output.map { _.name }
@@ -290,7 +457,7 @@ object CaveatRangePlan
           Literal(UPPER_BOUND_FIELD), ub
         ))
       }}
-        .getOrElse { RangeCaveats.rowAnnotationExpression }
+        .getOrElse { CaveatRangeEncoding.rowAnnotationExpression(annotationAttr) }
 
     val realColAnnotations: Expression =
       Option(colAnnotations)
@@ -308,7 +475,7 @@ object CaveatRangePlan
             }
           )
         }
-        .getOrElse { RangeCaveats.allAttributeAnnotationsExpression }
+        .getOrElse { CaveatRangeEncoding.allAttributeAnnotationsExpression(annotationAttr) }
 
     Alias(
       CreateNamedStruct(Seq(

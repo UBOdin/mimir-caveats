@@ -114,32 +114,32 @@ or test for the presence of a caveat in the set with `isEmpty`.
 
 |                Operator | `trackCaveats` | `rangeCaveats` | `enumerate` |
 |------------------------:|:--------------:|:--------------:|:-----------:|
-|            ReturnAnswer |       ✓        |                |      ✓      |
-|                Subquery |       ✓        |                |      ✓      |
-|                 Project |       ✓        |     ✓          |      ✓      |
-|                Generate |       ✓        |                |      ✓      |
-|                  Filter |       ✓        |     ✓          |      ✓      |
+|            ReturnAnswer | ✓              | ✓              | ✓           |
+|                Subquery | ✓              | ✓              | ✓           |
+|                 Project | ✓              | ✓              | ✓           |
+|                Generate | ✓              |                | ✓           |
+|                  Filter | ✓              | ✓              | ✓           |
 |               Intersect |                |                |             |
 |                  Except |                |                |             |
-|                   Union |       ✓        |                |      ✓      |
-|                    Join |       ✓        |                |      ✓      |
-|           InsertIntoDir |       ✓        |                |      ✓      |
-|                    View |       ✓        |                |      ✓      |
+|                   Union | ✓              | ✓              | ✓           |
+|                    Join | ✓ (inner)      | ✓ (inner)      | ✓           |
+|           InsertIntoDir | ✓              |                | ✓           |
+|                    View | ✓              |                | ✓           |
 |                    With |                |                |             |
 |    WithWindowDefinition |                |                |             |
-|                    Sort |       ✓        |                |      ✓      |
-|                   Range |       ✓        |                |             |
-|               Aggregate |       ✓        |                |      ✓      |
+|                    Sort | ✓              |                | ✓           |
+|                   Range | ✓              |                |             |
+|               Aggregate | ✓              |                | ✓           |
 |                  Window |                |                |             |
 |                  Expand |                |                |             |
 |            GroupingSets |                |                |             |
 |                   Pivot |                |                |             |
-|             GlobalLimit |       ✓        |                |      ✓      |
-|              LocalLimit |       ✓        |                |      ✓      |
-|           SubqueryAlias |       ✓        |                |      ✓      |
+|             GlobalLimit | ✓              |                | ✓           |
+|              LocalLimit | ✓              |                | ✓           |
+|           SubqueryAlias | ✓              |                | ✓           |
 |                  Sample |                |                |             |
-|                Distinct |       ✓        |                |      ✓      |
+|                Distinct | ✓              |                | ✓           |
 |             Repartition |                |                |             |
 | RepartitionByExpression |                |                |             |
-|          OneRowRelation |       ✓        |                |      ✓      |
-|             Deduplicate |       ✓        |                |             |
+|          OneRowRelation | ✓              |                | ✓           |
+|             Deduplicate | ✓              |                |             |
