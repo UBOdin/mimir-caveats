@@ -100,6 +100,13 @@ object CaveatRangeEncoding
   def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
     ubExpression(rowAnnotationExpression(annotation))
 
+  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): (Expression,Expression,Expression) =
+    (
+      rowLBexpression(annotation),
+      rowBGexpression(annotation),
+      rowUBexpression(annotation)
+    )
+
 
   def lbExpression(e: Expression): Expression =
     UnresolvedExtractValue(

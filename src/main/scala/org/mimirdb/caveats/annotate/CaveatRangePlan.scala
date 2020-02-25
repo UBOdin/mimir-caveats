@@ -1,6 +1,7 @@
 package org.mimirdb.caveats.annotate
 
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.JoinType
@@ -187,9 +188,18 @@ object CaveatRangePlan
           groupingExpressions: Seq[Expression],
           aggregateExpressions: Seq[NamedExpression],
           child: LogicalPlan) =>
-      {
+        {
+          /*
+          A classical aggregate.
+
+          Something to note here is that groupingExpressions is only used to
+          define the set of group-by attributes.  aggregateExpressions is the
+          actual projection list, and may include fragments to be evaluated both
+          pre- and post-aggregate.
+         */
         ???
       }
+      // for window operators we face the same challenge as for sort, we have to provide bounds for the aggregation function across all possible windows (partition + sort order)
       case Window(
           windowExpressions: Seq[NamedExpression],
           partitionSpec: Seq[Expression],
@@ -424,6 +434,68 @@ object CaveatRangePlan
       }
     }
 
+
+  /** Group input based on best-guess values and merge row annotations.
+    *
+    * @param plan input query
+    * @returns root operator of the addtiional instrumentation added on top of the input plan
+    */
+  def combineBestGuess(plan: LogicalPlan): LogicalPlan = {
+    val inputAttrs = plan.output.filter( _.name != Constants.ANNOTATION_ATTRIBUTE ).map( x => x.name)
+    val groupBy = plan.output
+    val boundAggs = plan.output.map { a => CaveatRangeEncoding.attributeAnnotationExpression(a.name) }
+
+    // sum up the tuple annotations
+    val boundFlatAttrs = Seq("__LB", "__BG", "__UB").map( x => Constants.ROW_FIELD + x )
+    val rowAnnotAggs : Seq[NamedExpression] =
+      CaveatRangeEncoding.rowAnnotationExpressionTriple()
+        .productIterator.toSeq.asInstanceOf[Seq[Expression]]
+        .zip(boundFlatAttrs).map {
+          x => x match { case (bound:Expression,name:String) => Alias(Sum(bound), name)() }
+        }
+
+    // merge attribute bounds
+    val boundAttrFlatAttrs: Seq[String] = inputAttrs.map( x => { Seq("__LB", "__UB").map( y => x + y) }).flatten
+    val attrAnnotAggs = inputAttrs.map( x => CaveatRangeEncoding.attributeAnnotationExpression(x) )
+      .map( x => Seq(Min(CaveatRangeEncoding.lbExpression(x)), Max(CaveatRangeEncoding.ubExpression(x))) : Seq[Expression] )
+      .flatten
+      .zip(boundAttrFlatAttrs)
+      .map(x => x match { case (bound:Expression,name:String) => Alias(bound, name)()  } )
+
+    val nestAnnotationAttr =
+      inputAttrs.map ( x => UnresolvedAttribute(x) )
+
+    // create aggregation for grouping and then renest into annotation attribute
+    Project(
+      nestAnnotationAttr,
+      Aggregate(
+        groupBy,
+        groupBy ++ attrAnnotAggs ++ rowAnnotAggs,
+        plan
+      )
+    )
+  }
+
+  def foldAdd(exprs: Seq[Expression]) : Expression = {
+    exprs.foldLeft[Expression](Literal(0))((x,y) => Add(x,y))
+  }
+
+  def foldMult(exprs: Seq[Expression]) : Expression = {
+    exprs.foldLeft[Expression](Literal(1))((x,y) => Multiply(x,y))
+  }
+
+  def constructAnnotUsingProject(
+    plan: LogicalPlan,
+    rowAnnotation: (Expression,Expression,Expression),
+    colAnnotations: Seq[(String,(Expression,Expression))],
+    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE)
+      : LogicalPlan =
+  {
+    Project(
+      plan.output :+ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
+      plan
+    )
+  }
 
   /** Build up a value of the nested annotation attribute from its components.
    *
