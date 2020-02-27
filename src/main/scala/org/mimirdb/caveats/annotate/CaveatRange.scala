@@ -16,7 +16,7 @@ case class CaveatRange(
 {
   def dataType = value.dataType
   protected def doGenCode(ctx: CodegenContext,ev: ExprCode): ExprCode =
-    value.genCode(ctx) //TODO treat this as a triple value and generate code to evaluate it like this
+    value.genCode(ctx) // if no instrumentation this is just a value
   def eval(input: InternalRow) = value.eval(input)
   def rangeEval(input: InternalRow) = (lb.eval(input), value.eval(input), ub.eval(input))
   def nullable = value.nullable

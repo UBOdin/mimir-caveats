@@ -10,6 +10,8 @@ import org.apache.spark.sql.catalyst.analysis.{
 
 
 import org.mimirdb.caveats._
+import org.mimirdb.caveats.annotate._
+import org.mimirdb.caveats.boundedtypes._
 
 /**
  * The [apply] method of this class is used to derive the annotation for an
@@ -70,8 +72,25 @@ object CaveatRangeExpression
         CaveatRangeEncoding.ubExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a))
       )
 
-      // Not entirely sure how to go about handling subqueries yet
+      // Not entirely sure how to go about handling subqueries yet (requires attribute level ranges like aggregation)
       case sq: SubqueryExpression => throw new AnnotationException("Can't handle subqueries yet", expr)
+
+      // comparison operators
+      case EqualTo(left,right) => {
+        val (llb, lbg, lub) = apply(left)
+        val (rlb, rbg, rub) = apply(right)
+
+        (
+          And(EqualTo(llb,rub),EqualTo(lub,rlb)),
+          expr,
+          And(LessThanOrEqual(llb,rub),LessThanOrEqual(rlb,lub))
+        )
+      }
+
+      case op:LessThanOrEqual => liftOrderComparison(op)
+      case op:LessThan => liftOrderComparison(op)
+      case op:GreaterThanOrEqual => liftOrderComparison(op)
+      case op:GreaterThan => liftOrderComparison(op)
 
       // Arithemic
       case Add(left,right) => liftPointwise(expr)
@@ -80,14 +99,14 @@ object CaveatRangeExpression
         val (llb, lbg, lub) = apply(left)
         val (rlb, rbg, rub) = apply(right)
 
-        (Subtract(llb,rub),expr,Subtract(rub,llb))
+        (Subtract(llb,rub),expr,Subtract(lub,rlb))
       }
 
       case Multiply(left,right) => minMaxAcrossAllCombinations(Multiply(left,right))
 
       case Divide(left,right) =>  minMaxAcrossAllCombinations(Divide(left,right))
 
-      // conditional
+      // conditional operators
       case If(predicate, thenClause, elseClause) =>
         {
           val cav_predicate = apply(predicate)
@@ -133,7 +152,7 @@ object CaveatRangeExpression
         // is certainly false, then we use another level of CaseWhen to test whether
         // the next predicate is certainly false or true. This way we avoid potentially
         // an factor n (number of clauses) blow-up in the size of predicates
-      case CaseWhen(branches, otherwise) => whenCases(CaseWhen(branches, otherwise))
+      case cas: CaseWhen => whenCases(cas)
 
       //   val casesB = whenCases(branches :: els)
       //   (
@@ -143,6 +162,7 @@ object CaveatRangeExpression
       //   )
       // }
 
+      /* logical operators */
       case Not(child) => {
         val (lb,bg,ub) = apply(child)
         (Not(ub), Not(bg), Not(lb))
@@ -152,12 +172,25 @@ object CaveatRangeExpression
 
       case Or(lhs, rhs) => liftPointwise(expr)
 
-      // works for and / or /
+      // works for and / or / too
       case _ => liftPointwise(expr)
     }
   }
 
-  //TODO ok to duplicate names?
+  // lift to (lub,rlb) and (llb,rub)
+  def liftOrderComparison(op: BinaryExpression) : (Expression,Expression,Expression) = {
+    val (left,right) = (op.children(0), op.children(1))
+    val (llb, lbg, lub) = apply(left)
+    val (rlb, rbg, rub) = apply(right)
+
+    (
+      op.withNewChildren(Seq(lub,rlb)),
+      op,
+      op.withNewChildren(Seq(llb,rub))
+    )
+  }
+
+  //TODO should not duplicate names!
   def preserveName(expr: NamedExpression): (NamedExpression,NamedExpression,NamedExpression) =
   {
     val (lb,bg,ub) = apply(expr)
@@ -226,26 +259,29 @@ object CaveatRangeExpression
       case CaseWhen(Seq(), None) => null
       // a single when then clause
       case CaseWhen(Seq((pred, outcome)), None) => {
-            val predB = apply(pred)
-            val outcomeB = apply(outcome)
-
-            (
-              CaseWhen(
-                Seq(
-                  (isCertainTrue(predB), getLB(predB))
-                )
-                //TODO need a minimum domain value here (now this will be null)
-              ),
-              when,
-              CaseWhen(
-                Seq(
-                  (isCertainTrue(predB), getUB(predB))
-                )
-                //TODO need to plug in maximum domain value here (now this will be null)
-              )
-            )
-          }
-       // an else clause only
+        val predB = apply(pred)
+        val outcomeB = apply(outcome)
+        // if when is not resolved then we cannot determine result types and cannot select the right values
+        assert(when.resolved)
+        val resultDT = when.dataType
+        assert(BoundedDataType.isBoundedType(resultDT))
+        (
+          CaseWhen(
+            Seq(
+              (isCertainTrue(predB), getLB(predB))
+            ),
+            Some(Literal(BoundedDataType.domainMin(resultDT)))
+          ),
+          when,
+          CaseWhen(
+            Seq(
+              (isCertainTrue(predB), getUB(predB))
+            ),
+            Some(Literal(BoundedDataType.domainMax(resultDT)))
+          )
+        )
+      }
+      // an else clause only
       case CaseWhen(Seq(), Some(els)) => {
             val elsB = apply(els)
             ( getLB(elsB), els, getUB(elsB) )
@@ -258,7 +294,7 @@ object CaveatRangeExpression
         (
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getLB(predB)),
+              (isCertainTrue(predB), getLB(outcomeB)),
               (isCertainFalse(predB), getLB(otherBounds))
             ),
             Least(Seq(getLB(outcomeB), getLB(otherBounds)))
@@ -266,7 +302,7 @@ object CaveatRangeExpression
           when,
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getUB(predB)),
+              (isCertainTrue(predB), getUB(outcomeB)),
               (isCertainFalse(predB), getUB(otherBounds))
             ),
             Greatest(Seq(getUB(outcomeB), getUB(otherBounds)))

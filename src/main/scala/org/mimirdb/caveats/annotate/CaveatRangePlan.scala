@@ -47,6 +47,11 @@ object CaveatRangePlan
     // behaviors get surfaced early.
 
     val ret = plan match {
+
+      /*********************************************************/
+      // do not rewrite plan that already has caveats
+      case _ if Caveats.planIsAnnotated(plan) => plan
+
       case _:ReturnAnswer =>
       {
         /*
@@ -466,22 +471,40 @@ object CaveatRangePlan
       inputAttrs.map ( x => UnresolvedAttribute(x) )
 
     // create aggregation for grouping and then renest into annotation attribute
-    Project(
-      nestAnnotationAttr,
+    constructAnnotUsingProject(
       Aggregate(
         groupBy,
         groupBy ++ attrAnnotAggs ++ rowAnnotAggs,
         plan
+      ),
+      boundFlatAttrs.map( x => UnresolvedAttribute(x) ) match { case Seq(lb,bg,ub) => (lb,bg,ub) },
+      inputAttrs.map( x =>
+        (x,
+        { Seq("__LB", "__UB").map( y => UnresolvedAttribute(x + y) ) } match { case Seq(a,b) => (a,b) }
+        )
       )
     )
   }
 
+  //TODO this should exist in standard lib?
+  private def grptwo[T]( a: Seq[T] ) : Seq[(T,T)] =
+    a match {
+      case Nil => Seq()
+      case b :: c :: remainder => Seq((b,c)) ++ grptwo(remainder)
+    }
+
   def foldAdd(exprs: Seq[Expression]) : Expression = {
-    exprs.foldLeft[Expression](Literal(0))((x,y) => Add(x,y))
+    exprs match {
+      case Seq(e) => e
+      case _ => exprs.foldLeft[Expression](Literal(0))((x,y) => Add(x,y))
+    }
   }
 
   def foldMult(exprs: Seq[Expression]) : Expression = {
-    exprs.foldLeft[Expression](Literal(1))((x,y) => Multiply(x,y))
+    exprs match {
+      case Seq(e) => e
+      case _ => exprs.foldLeft[Expression](Literal(1))((x,y) => Multiply(x,y))
+    }
   }
 
   def constructAnnotUsingProject(
