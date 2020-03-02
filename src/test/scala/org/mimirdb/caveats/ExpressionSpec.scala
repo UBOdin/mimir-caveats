@@ -14,8 +14,8 @@ import org.apache.spark.sql.types._
 
 import org.mimirdb.implicits._
 
-class ExpressionSpec 
-  extends Specification 
+class ExpressionSpec
+  extends Specification
   with ExpressionMatchers
   with SharedSparkTestInstance
 {
@@ -36,11 +36,11 @@ class ExpressionSpec
   {
     val wrapper =
       df.select(e)
-        .annotate
+        .trackCaveats
         .queryExecution
         .analyzed
         .asInstanceOf[Project]
-    val schema = 
+    val schema =
       wrapper.child.output
     val result =
       wrapper
@@ -52,7 +52,7 @@ class ExpressionSpec
         .valExprs(1) // Caveats.COLUMN_ANNOTATION
         .asInstanceOf[CreateNamedStruct]
         .valExprs(0) // The only column we added
-    
+
     op( bindReference(result, schema) )
   }
 
@@ -65,9 +65,9 @@ class ExpressionSpec
   "AnnotateExpression" in {
 
     "handle simple caveat-free annotation" >> {
-      
 
-      annotate(lit(1)) { e => 
+
+      annotate(lit(1)) { e =>
         e must beEquivalentTo(Literal(false))
         test(e)() must beFalse
       }
@@ -81,45 +81,45 @@ class ExpressionSpec
     }
 
     "handle simple annotation with caveats" >> {
-      
+
       annotate(
         $"A".caveat("a possible error")
-      ) { e => 
+      ) { e =>
         test(e)("1" -> false, "2" -> false, "3" -> false) must beTrue
       }
-      
+
     }
 
     "handle when clauses" >> {
-      
+
       annotate(
         when($"B" === 0, $"A")
-          .otherwise(1) 
-      ){ e => 
+          .otherwise(1)
+      ){ e =>
         test(e)("0" -> false, "1" -> false, "2" -> false) must beFalse
         test(e)("0" -> false, "1" -> true,  "2" -> false) must beTrue
-        test(e)("0" -> false, "0" -> false, "2" -> false) must beFalse        
+        test(e)("0" -> false, "0" -> false, "2" -> false) must beFalse
         test(e)("0" -> false, "0" -> true,  "2" -> false) must beTrue
-        test(e)("0" -> true,  "1" -> false, "2" -> false) must beFalse        
+        test(e)("0" -> true,  "1" -> false, "2" -> false) must beFalse
         test(e)("0" -> true,  "0" -> false, "2" -> false) must beTrue
       }
 
       annotate(
         when($"B" === 0, $"A")
-          .otherwise(lit(1).caveat("an error")) 
-      ){ e => 
+          .otherwise(lit(1).caveat("an error"))
+      ){ e =>
         test(e)("0" -> false, "0" -> false, "2" -> false) must beFalse
         test(e)("0" -> false, "1" -> false, "2" -> false) must beTrue
       }
     }
 
     "handle conjunctions and disjunctions" >> {
-      
+
       annotate(
-        (($"A" === 1) and 
-          ($"B" === 1)) or 
+        (($"A" === 1) and
+          ($"B" === 1)) or
             ($"C" === 1)
-      ){ e => 
+      ){ e =>
         // no caveats
         test(e)("1" -> false, "1" -> false, "1" -> false) must beFalse
 
@@ -145,7 +145,6 @@ class ExpressionSpec
         test(e)("1" -> true, "1" -> true, "0" -> false)   must beTrue
       }
     }
-
 
   }
 

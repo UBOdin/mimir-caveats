@@ -4,7 +4,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.plans.{ JoinType, Cross }
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
 
@@ -14,40 +14,46 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.spark.expressionLogic.{
-  foldOr, 
+  foldOr,
+  foldAnd,
   foldIf,
   attributesOfExpression,
-  aggregateBoolOr
+  aggregateBoolOr,
+  negate,
+  isAggregate
 }
 
-class AnnotatePlan(
+class CaveatExistsInPlan(
   pedantic: Boolean = true,
   ignoreUnsupported: Boolean = false,
-  trace: Boolean = false,
+  trace: Boolean = false
 )
-  extends LazyLogging
+  extends AnnotationInstrumentationStrategy
+  with LazyLogging
 {
 
-  lazy val annotateExpression = AnnotateExpression(_:Expression, 
-                                                    pedantic = pedantic)
-  lazy val annotateAggregate  = AnnotateExpression(_:Expression, 
-                                                    pedantic = pedantic, 
-                                                    expectAggregate = true)
+  def annotationEncoding = CaveatExistsBooleanArrayEncoding
 
-  /** 
-   * Return a logical plan identical to the input plan, but with an additional 
-   * attribute containing caveat annotations.  
-   * 
-   * By analogy, if, after evaluation a row annotation is false, calling 
+  def annotationType = CaveatExistsType
+
+  lazy val annotateAggregate  = new CaveatExistsInExpression(pedantic = pedantic,
+                                                             expectAggregate = true)
+  lazy val annotateExpression = annotateAggregate.withoutExpectingAggregate
+
+  /**
+   * Return a logical plan identical to the input plan, but with an additional
+   * attribute containing caveat annotations.
+   *
+   * By analogy, if, after evaluation a row annotation is false, calling
    * EnumerateCaveats should not return any row-level caveats when limited to
    * the slice including the specified row.
    */
   def apply(plan: LogicalPlan): LogicalPlan =
   {
-    def PASS_THROUGH_CAVEATS = 
+    def PASS_THROUGH_CAVEATS =
       plan.mapChildren { apply(_) }
 
-    def PLAN_IS_FREE_OF_CAVEATS = 
+    def PLAN_IS_FREE_OF_CAVEATS =
       buildPlan(
         plan = plan,
         schema = plan.output,
@@ -56,21 +62,21 @@ class AnnotatePlan(
       )
 
     // Each operator has its own interactions with caveats.  Force an explicit
-    // matching rather than using Spark's tree recursion operators and default 
+    // matching rather than using Spark's tree recursion operators and default
     // to fail-stop operation to make sure that new operators or non-standard
     // behaviors get surfaced early.
 
     val ret: LogicalPlan = plan match {
 
       /*********************************************************/
-      case _ if planIsAnnotated(plan) => plan
+      case _ if Caveats.planIsAnnotated(plan) => plan
 
       /*********************************************************/
-      case _:ReturnAnswer => 
+      case _:ReturnAnswer =>
       {
-        /* 
+        /*
           A node automatically inserted at the top of query plans to allow
-          pattern-matching rules to insert top-only operators.  
+          pattern-matching rules to insert top-only operators.
         */
         PASS_THROUGH_CAVEATS
       }
@@ -79,26 +85,26 @@ class AnnotatePlan(
       case _:Subquery =>
       {
         /*
-          A node automatically inserted at the top of subquery plans to 
-          allow for subquery-specific optimizatiosn.  
+          A node automatically inserted at the top of subquery plans to
+          allow for subquery-specific optimizatiosn.
         */
         PASS_THROUGH_CAVEATS
       }
 
       /*********************************************************/
-      case Project(projectList: Seq[NamedExpression], child: LogicalPlan) => 
+      case Project(projectList: Seq[NamedExpression], child: LogicalPlan) =>
       {
         /*
-          The extended relational projection operator, analagous to Scala's 
-          'map'.  Each element of projectList defines an attribute in the 
+          The extended relational projection operator, analagous to Scala's
+          'map'.  Each element of projectList defines an attribute in the
           schema resulting from this operator, and is evaluated over attributes
           in the input.
         */
 
         val rewrittenChild = apply(child)
-        val annotation = 
+        val annotation =
           buildAnnotation(
-            rewrittenChild, 
+            rewrittenChild,
             attributes = projectList.map { e => e.name -> annotateExpression(e) }
           )
         Project(
@@ -114,19 +120,19 @@ class AnnotatePlan(
           outer: Boolean,
           qualifier: Option[String],
           generatorOutput: Seq[Attribute],
-          child: LogicalPlan) => 
+          child: LogicalPlan) =>
       {
-        /* 
+        /*
           Generate is analogous to flatMap or unnest.  This is projection,
-          but where each projection is allowed to return multiple rows.  
+          but where each projection is allowed to return multiple rows.
 
-          The additional attributes in [generatorOutput] are added by 
-          [generator], which is basically just a normal expression.  Since (as 
+          The additional attributes in [generatorOutput] are added by
+          [generator], which is basically just a normal expression.  Since (as
           of yet) we do not support complex types, we're just going to propagate
-          any annotation triggered by the generator down to the generated 
+          any annotation triggered by the generator down to the generated
           attributes.
 
-          Note that when [unrequiredChildIndex] is empty, the schema emitted by 
+          Note that when [unrequiredChildIndex] is empty, the schema emitted by
           a generator is/should be a strict superset of [child].
         */
 
@@ -134,17 +140,17 @@ class AnnotatePlan(
         val rewrittenChild = apply(child)
         extendPlan(
           // If there's a caveat on the generator, the number of rows might
-          // change.  
+          // change.
           row = generatorAnnotation,
 
-          // If there's a caveat on the generator, it propagates to all 
+          // If there's a caveat on the generator, it propagates to all
           // generated attributes
-          attributes = generatorOutput.map { attribute => 
-            attribute.name -> generatorAnnotation 
+          attributes = generatorOutput.map { attribute =>
+            attribute.name -> generatorAnnotation
           },
 
-          // Reconstruct the generator operator to 
-          // For safety, rebuild the generator to restore all output attributes 
+          // Reconstruct the generator operator to
+          // For safety, rebuild the generator to restore all output attributes
           // until the next optimization pass.
           schema = plan.output,
           plan = Generate(
@@ -159,7 +165,7 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case Filter(condition: Expression, child: LogicalPlan) => 
+      case Filter(condition: Expression, child: LogicalPlan) =>
       {
         /*
           Filter is a normal where clause.  Caveats on the condition expression
@@ -175,10 +181,10 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case Intersect(left: LogicalPlan, right: LogicalPlan, isAll: Boolean) => 
+      case Intersect(left: LogicalPlan, right: LogicalPlan, isAll: Boolean) =>
       {
         /*
-          Return every tuple that appears in *both* left and right.  
+          Return every tuple that appears in *both* left and right.
 
           This depends on the UAADB paper.
         */
@@ -186,10 +192,10 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case Except(left: LogicalPlan, right: LogicalPlan, isAll: Boolean) => 
+      case Except(left: LogicalPlan, right: LogicalPlan, isAll: Boolean) =>
       {
         /*
-          Return every tuple that appears in left, and *not* right.  
+          Return every tuple that appears in left, and *not* right.
 
           This depends on the UAADB paper.
         */
@@ -197,7 +203,7 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case Union(children: Seq[LogicalPlan]) => 
+      case Union(children: Seq[LogicalPlan]) =>
       {
         PASS_THROUGH_CAVEATS
       }
@@ -207,9 +213,9 @@ class AnnotatePlan(
           left: LogicalPlan,
           right: LogicalPlan,
           joinType: JoinType,
-          condition: Option[Expression]) => 
+          condition: Option[Expression]) =>
       {
-        /* 
+        /*
           Normal relational join.  The main gimmick here is that we need to
           do a bit of renaming.  We rename the LHS/RHS annotations to disjoint
           names, and then add another projection after the fact to merge the
@@ -218,18 +224,18 @@ class AnnotatePlan(
 
         val LEFT_ANNOTATION_ATTRIBUTE = ANNOTATION_ATTRIBUTE+"_LEFT"
         val RIGHT_ANNOTATION_ATTRIBUTE = ANNOTATION_ATTRIBUTE+"_RIGHT"
-        val rewrittenLeft = 
+        val rewrittenLeft =
           Project(
             left.output :+ Alias(
-                UnresolvedAttribute(ANNOTATION_ATTRIBUTE), 
+                UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
                 LEFT_ANNOTATION_ATTRIBUTE
               )(),
             apply(left)
           )
-        val rewrittenRight = 
+        val rewrittenRight =
           Project(
             right.output :+ Alias(
-                UnresolvedAttribute(ANNOTATION_ATTRIBUTE), 
+                UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
                 RIGHT_ANNOTATION_ATTRIBUTE
               )(),
             apply(right)
@@ -239,26 +245,26 @@ class AnnotatePlan(
         val annotation = buildAnnotation(
           plan,
         )
-        val attributes = 
-          left.output.map  { (LEFT_ANNOTATION_ATTRIBUTE, _)  } ++ 
+        val attributes =
+          left.output.map  { (LEFT_ANNOTATION_ATTRIBUTE, _)  } ++
           right.output.map { (RIGHT_ANNOTATION_ATTRIBUTE, _) }
 
         buildPlan(
 
           // Rows in the output are caveated if either input tuple is
-          // caveated, or if there is a caveated join condition 
+          // caveated, or if there is a caveated join condition
           row = foldOr(
             (Seq(
-              Caveats.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
-              Caveats.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
             ) ++ conditionAnnotation):_*
           ),
 
           // Attribute caveats pass through from the source attributes.
-          attributes = 
+          attributes =
             attributes.map { case (annotation, attr) =>
-              attr.name -> 
-                Caveats.attributeAnnotationExpression(attr.name, annotation)
+              attr.name ->
+                CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name, annotation)
             },
 
           schema = plan.output,
@@ -277,18 +283,18 @@ class AnnotatePlan(
           storage: CatalogStorageFormat,
           provider: Option[String],
           child: LogicalPlan,
-          overwrite: Boolean) => 
+          overwrite: Boolean) =>
       {
         /*
           Not entirely sure about this one, but it looks like an operator that
-          materializes the intermediate state of a query plan.  If that's all 
+          materializes the intermediate state of a query plan.  If that's all
           it is, we should be able to leave it with a pass-through.
         */
         PASS_THROUGH_CAVEATS
       }
 
       /*********************************************************/
-      case View(desc: CatalogTable, output: Seq[Attribute], child: LogicalPlan) => 
+      case View(desc: CatalogTable, output: Seq[Attribute], child: LogicalPlan) =>
       {
         /*
           Views are a bit weird.  We need to change the schema, which breaks the
@@ -300,10 +306,10 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case With(child: LogicalPlan, cteRelations: Seq[(String, SubqueryAlias)]) => 
+      case With(child: LogicalPlan, cteRelations: Seq[(String, SubqueryAlias)]) =>
       {
         /*
-          Common Table Expressions.  Basically, you evaluate each of the 
+          Common Table Expressions.  Basically, you evaluate each of the
           [cteRelations] in order, and expose the result to subsequent ctes and
           the child, which produces the final result.
 
@@ -314,7 +320,7 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case WithWindowDefinition(windowDefinitions: Map[String, WindowSpecDefinition], child: LogicalPlan) => 
+      case WithWindowDefinition(windowDefinitions: Map[String, WindowSpecDefinition], child: LogicalPlan) =>
       {
         /*
           Prepare window definitions for use in the child plan.
@@ -326,13 +332,13 @@ class AnnotatePlan(
       }
 
       /*********************************************************/
-      case Sort(order: Seq[SortOrder], global: Boolean, child: LogicalPlan) => 
+      case Sort(order: Seq[SortOrder], global: Boolean, child: LogicalPlan) =>
       {
         /*
-          Establish an order on the tuples. 
+          Establish an order on the tuples.
 
           A little surprisingly, we don't actually do anything here.  SORT can
-          not affect the contents of a relation unless paired with a LIMIT 
+          not affect the contents of a relation unless paired with a LIMIT
           clause, so we handle the resulting row annotation there.  Caveats on
           the sort order are, in turn, handled by EnumerateCaveats
         */
@@ -346,7 +352,7 @@ class AnnotatePlan(
           step: Long,
           numSlices: Option[Int],
           output: Seq[Attribute],
-          isStreaming: Boolean) => 
+          isStreaming: Boolean) =>
       {
         /*
           Generate a sequence of integers
@@ -360,7 +366,7 @@ class AnnotatePlan(
       case Aggregate(
           groupingExpressions: Seq[Expression],
           aggregateExpressions: Seq[NamedExpression],
-          child: LogicalPlan) => 
+          child: LogicalPlan) =>
       {
         /*
           A classical aggregate.
@@ -374,47 +380,89 @@ class AnnotatePlan(
         val annotatedChild = apply(child)
         val groupingAttributes =
           groupingExpressions.flatMap { attributesOfExpression(_) }.toSet
-        val aGroupingAttributeIsCaveated = 
-          if(!groupingAttributes.isEmpty){
-            foldOr((
-              EnumeratePlanCaveats(child)(
-                fields = groupingAttributes.map { _.name }
-              ).map { caveatSet => Not(caveatSet.isEmptyExpression) }
-            ):_*)
-          } else { Literal(false) }
+
         val groupMembershipDependsOnACaveat =
-          foldOr(groupingExpressions.map { annotateAggregate(_) }:_*)
+          foldOr(groupingExpressions.map { annotateExpression(_) }:_*)
 
-        val rowAnnotation = groupMembershipDependsOnACaveat
+        val groupIsGuaranteedToHaveRows =
+          aggregateBoolOr(
+            foldAnd(
+              negate(CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()),
+              negate(groupMembershipDependsOnACaveat)
+            )
+          )
+
+        val rowAnnotation = negate(groupIsGuaranteedToHaveRows)
 
 
-        val attrAnnotations = 
-          aggregateExpressions.map { aggr => 
+
+        val attrAnnotations =
+          aggregateExpressions.map { aggr =>
             // If group membership depends on a caveat, it becomes necessary to
             // annotate each and every aggregate value, since they could change
             // (hence the groupMembershipDependsOnACaveat here).
             //
-            // Additionally, 
+            // Additionally,
             // TODO: refine this so that group-by attributes don't get annotated
             // TODO: move grouping caveats out to table-level?
-            aggr.name -> foldOr(
-                           annotateAggregate(aggr), 
-                           groupMembershipDependsOnACaveat
-                         )
+            aggr.name ->  foldOr(
+                            annotateAggregate(aggr),
+                            aggregateBoolOr(
+                              if(isAggregate(aggr)){
+                                foldOr(
+                                  groupMembershipDependsOnACaveat,
+                                  CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
+                                )
+                              } else { groupMembershipDependsOnACaveat }
+                            )
+                          )
           }
 
-        val annotation = 
+        val annotation =
           buildAnnotation(
             plan = child,
             row = rowAnnotation,
             attributes = attrAnnotations
           )
 
-        Aggregate(
-          groupingExpressions,
-          aggregateExpressions :+ annotation,
-          apply(annotatedChild)
-        )
+        val ret =
+          Aggregate(
+            groupingExpressions,
+            aggregateExpressions :+ annotation,
+            annotatedChild
+          )
+
+        // If we're being pedantic, than a caveatted group-by could be
+        // hypothetically placed into ANY group, contaminating all attribute
+        // annotations.
+        if(pedantic && !groupMembershipDependsOnACaveat.equals(Literal(false))){
+          val CONTAMINATED_GROUPS = ANNOTATION_ATTRIBUTE+"_EXIST_IN_GROUPBY"
+          val join =
+            Join(
+              Aggregate(Seq(),
+                Seq(Alias(aggregateBoolOr(groupMembershipDependsOnACaveat),
+                          CONTAMINATED_GROUPS)()),
+                annotatedChild
+              ),
+              ret,
+              Cross,
+              None
+            )
+          Project(
+            plan.output :+ buildAnnotation(
+              plan = join,
+              attributes =
+                plan.output.map { attr =>
+                    attr.name ->
+                      foldOr(
+                        CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name),
+                        UnresolvedAttribute(CONTAMINATED_GROUPS)
+                      )
+                 }
+            ),
+            join
+          )
+        } else { ret }
       }
 
       /*********************************************************/
@@ -422,13 +470,13 @@ class AnnotatePlan(
           windowExpressions: Seq[NamedExpression],
           partitionSpec: Seq[Expression],
           orderSpec: Seq[SortOrder],
-          child: LogicalPlan) => 
+          child: LogicalPlan) =>
       {
         ???
       }
 
       /*********************************************************/
-      case Expand(projections: Seq[Seq[Expression]], output: Seq[Attribute], child: LogicalPlan) => 
+      case Expand(projections: Seq[Seq[Expression]], output: Seq[Attribute], child: LogicalPlan) =>
       {
         ???
       }
@@ -438,7 +486,7 @@ class AnnotatePlan(
           selectedGroupByExprs: Seq[Seq[Expression]],
           groupByExprs: Seq[Expression],
           child: LogicalPlan,
-          aggregations: Seq[NamedExpression]) => 
+          aggregations: Seq[NamedExpression]) =>
       {
         ???
       }
@@ -449,27 +497,37 @@ class AnnotatePlan(
           pivotColumn: Expression,
           pivotValues: Seq[Expression],
           aggregates: Seq[Expression],
-          child: LogicalPlan) => 
+          child: LogicalPlan) =>
       {
         ???
       }
 
       /*********************************************************/
-      case GlobalLimit(limitExpr: Expression, child: LogicalPlan) => 
+      case GlobalLimit(limitExpr: Expression, child: LogicalPlan) =>
       {
-        ???
+        val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
+        extendPlan(
+          GlobalLimit(limitExpr, apply(child)),
+          plan.output,
+          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+        )
       }
 
       /*********************************************************/
-      case LocalLimit(limitExpr: Expression, child: LogicalPlan) => 
+      case LocalLimit(limitExpr: Expression, child: LogicalPlan) =>
       {
-        ???
+        val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
+        extendPlan(
+          GlobalLimit(limitExpr, apply(child)),
+          plan.output,
+          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+        )
       }
 
       /*********************************************************/
-      case SubqueryAlias(identifier: AliasIdentifier, child: LogicalPlan) => 
+      case SubqueryAlias(identifier: AliasIdentifier, child: LogicalPlan) =>
       {
-        ???
+        PASS_THROUGH_CAVEATS
       }
 
       /*********************************************************/
@@ -478,19 +536,26 @@ class AnnotatePlan(
           upperBound: Double,
           withReplacement: Boolean,
           seed: Long,
-          child: LogicalPlan) => 
+          child: LogicalPlan) =>
       {
         ???
       }
 
       /*********************************************************/
-      case Distinct(child: LogicalPlan) => 
+      case Distinct(child: LogicalPlan) =>
       {
-        ???
+        /*
+          Return distinct records (i.e., toSet)
+
+          We can no longer treat this as a normal distinct, since the annotation
+          is a dependent attribute.  Convert to a (trivial) aggregate and
+          rewrite that.
+        */
+        apply(Aggregate(child.output, child.output, child))
       }
 
       /*********************************************************/
-      case Repartition(numPartitions: Int, shuffle: Boolean, child: LogicalPlan) => 
+      case Repartition(numPartitions: Int, shuffle: Boolean, child: LogicalPlan) =>
       {
         ???
       }
@@ -499,19 +564,19 @@ class AnnotatePlan(
       case RepartitionByExpression(
           partitionExpressions: Seq[Expression],
           child: LogicalPlan,
-          numPartitions: Int) => 
+          numPartitions: Int) =>
       {
         ???
       }
 
       /*********************************************************/
-      case OneRowRelation() => 
+      case OneRowRelation() =>
       {
-        ???
+        PLAN_IS_FREE_OF_CAVEATS
       }
 
       /*********************************************************/
-      case Deduplicate(keys: Seq[Attribute], child: LogicalPlan) => 
+      case Deduplicate(keys: Seq[Attribute], child: LogicalPlan) =>
       {
         ???
       }
@@ -526,7 +591,7 @@ class AnnotatePlan(
     } else {
       logger.trace(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
     }
-      
+
     return ret
   }
 
@@ -537,7 +602,7 @@ class AnnotatePlan(
     attributes: Seq[(String, Expression)] = Seq()
   ): LogicalPlan =
   {
-    val annotation = 
+    val annotation =
       extendAnnotation(
         plan = plan,
         schema = schema,
@@ -557,7 +622,7 @@ class AnnotatePlan(
     attributes: Seq[(String, Expression)] = Seq()
   ): LogicalPlan =
   {
-    val annotation = 
+    val annotation =
       buildAnnotation(
         plan = plan,
         row = row,
@@ -574,59 +639,56 @@ class AnnotatePlan(
     schema: Seq[Attribute],
     row: Expression = null,
     attributes: Seq[(String, Expression)] = Seq()
-  ): NamedExpression = 
+  ): NamedExpression =
   {
     assert(
-      ((row != null) && (!attributes.isEmpty)) || planIsAnnotated(plan)
+      ((row != null) && (!attributes.isEmpty)) || Caveats.planIsAnnotated(plan)
     )
 
-    var rowAnnotation = 
-      Caveats.rowAnnotationExpression()
+    var rowAnnotation =
+      CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
     if(row != null){
       rowAnnotation = Or(rowAnnotation, row)
     }
 
-    var attributeAnnotations = 
-      schema.map { attribute => 
-        attribute.name -> Caveats.attributeAnnotationExpression(attribute.name)
+    var attributeAnnotations =
+      schema.map { attribute =>
+        attribute.name -> CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attribute.name)
       } ++ attributes
 
     buildAnnotation(
-      plan, 
+      plan,
       row = rowAnnotation,
       attributes = attributeAnnotations
     )
   }
 
-  def planIsAnnotated(plan: LogicalPlan): Boolean =
-      plan.output.map { _.name }.exists { _.equals(ANNOTATION_ATTRIBUTE) }
-
   def buildAnnotation(
     plan: LogicalPlan,
-    row: Expression = null, 
+    row: Expression = null,
     attributes: Seq[(String, Expression)] = null
-  ): NamedExpression = 
+  ): NamedExpression =
   {
     // If we're being asked to propagate existing caveats, we'd better
     // be seeing an annotation in the input schema
     assert(
-      ((row != null) && (attributes != null)) || planIsAnnotated(plan)
+      ((row != null) && (attributes != null)) || Caveats.planIsAnnotated(plan)
     )
 
     val realRowAnnotation: Expression =
       Option(row)
-        .getOrElse { Caveats.rowAnnotationExpression() }
+        .getOrElse { CaveatExistsBooleanArrayEncoding.rowAnnotationExpression() }
 
     val realAttributeAnnotations: Expression =
       Option(attributes)
-        .map { attributes => 
+        .map { attributes =>
 
           // CreateNamedStruct takes parameters in groups of 2: name -> value
           CreateNamedStruct(
             attributes.flatMap { case (a, b) => Seq(Literal(a),b) }
-          ) 
+          )
         }
-        .getOrElse { Caveats.allAttributeAnnotationsExpression() }
+        .getOrElse { CaveatExistsBooleanArrayEncoding.allAttributeAnnotationsExpression() }
 
     Alias(
       CreateNamedStruct(Seq(

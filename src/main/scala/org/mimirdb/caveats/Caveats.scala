@@ -17,41 +17,42 @@ import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
+/**
+  * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
+  * for a particular [AnnotationType].
+  */
 object Caveats
 {
 
+  var defaultAnnotator: AnnotationInstrumentationStrategy = CaveatExists()
 
   /**
    * Extend the provided [DataFrame] with an annotation attribute.
-   * 
-   * The attribute will use the identifier [Caveats.ANNOTATION_ATTRIBUTE].  It 
-   * will be a [Struct] with two fields identified by [Caveat.ROW_FIELD] and 
+   *
+   * The attribute will use the identifier [Caveats.ANNOTATION_ATTRIBUTE].  It
+   * will be a [Struct] with two fields identified by [Caveat.ROW_FIELD] and
    * [Caveat.ATTRIBUTE_FIELD].  The row annotation is Boolean-typed, while the
-   * attribute annotation is a structure with one Boolean-typed field for each 
+   * attribute annotation is a structure with one Boolean-typed field for each
    * attribute of the input [DataFrame] (i.e. `df.output`).
 
    * @param   dataset           The [DataFrame] to anotate
-   * @param   pedantic          If true, everything is annotated according to 
+   * @param   pedantic          If true, everything is annotated according to
    *                            the official spec.  This may reduce performance
-   *                            or overwhelm the results with too many 
+   *                            or overwhelm the results with too many
    *                            annotations.
    * @param   ignoreUnsupported If true, attempt to work around unsupported plan
-   *                            operators.  We make no guarantees about the 
+   *                            operators.  We make no guarantees about the
    *                            correctness of the resulting annotations.
    * @return                    [dataset] extended with an annotation attribute
    **/
-  def annotate(dataset:DataFrame, 
-    pedantic: Boolean = true,
-    ignoreUnsupported: Boolean = false,
-    trace: Boolean = false): DataFrame = 
+  def annotate(dataset:DataFrame,
+    annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+  ): DataFrame =
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = new AnnotatePlan(
-        pedantic = pedantic, 
-        ignoreUnsupported = ignoreUnsupported,
-        trace = trace
-      )(plan)
+    val annotated = annotator(plan)
     val baseSchema = plan.schema
 
     return new DataFrame(
@@ -59,52 +60,18 @@ object Caveats
       annotated,
       RowEncoder(
         plan.schema.add(
-          ANNOTATION_ATTRIBUTE, 
-          annotationStruct(plan.schema.fieldNames),
+          annotationAttribute,
+          annotator.annotationEncoding.annotationStruct(plan.schema.fieldNames),
           false
         )
       )
-      ///RowEncoder() 
+      ///RowEncoder()
       // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
       //       (and final, so we can't make it accessible with reflection)
     )
   }
 
+  def planIsAnnotated(plan: LogicalPlan, annotation: String = ANNOTATION_ATTRIBUTE): Boolean =
+    plan.output.map { _.name }.exists { _.equals(annotation) }
 
-  def allAttributeAnnotationsExpression(
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ATTRIBUTE_FIELD)
-    )
-
-  def attributeAnnotationExpression(
-    attr: String, 
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      allAttributeAnnotationsExpression(annotation),
-      Literal(attr)
-    )
-
-  def rowAnnotationExpression(
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ROW_FIELD)
-    )
-
-  def annotationStruct(fieldNames:Seq[String]): StructType =
-  {
-    StructType(Seq(
-      StructField(ROW_FIELD, BooleanType, false),
-      StructField(ATTRIBUTE_FIELD, StructType(
-        fieldNames.map { 
-          StructField(_, BooleanType, false)
-        }
-      ), false)
-    ))
-  }
 }
