@@ -14,7 +14,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.Column
 
-import org.mimirdb.caveats.implicits._
+import org.mimirdb.implicits._
 
 import org.mimirdb.caveats.annotate._
 

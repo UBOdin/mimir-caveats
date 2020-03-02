@@ -7,7 +7,7 @@ import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
 import org.apache.spark.sql.functions._
 import org.mimirdb.caveats.Constants._
 import org.mimirdb.caveats._
-import org.mimirdb.caveats.implicits._
+import org.mimirdb.implicits._
 import org.mimirdb.caveats.annotate._
 
 class LogicalPlanSpec 
