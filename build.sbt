@@ -1,6 +1,6 @@
 name := "mimir-caveats"
 version := "0.1-SNAPSHOT"
-organization := "info.mimirdb"
+organization := "org.mimirdb"
 scalaVersion := "2.12.10"
 
 // Make the UX work in SBT

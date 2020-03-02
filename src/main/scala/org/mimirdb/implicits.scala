@@ -1,7 +1,8 @@
-package org.mimirdb.caveats
+package org.mimirdb
 
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
+import org.mimirdb.caveats._
 
 class ColumnImplicits(col: Column)
 {

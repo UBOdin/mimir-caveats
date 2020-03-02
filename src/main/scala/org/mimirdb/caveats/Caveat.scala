@@ -1,11 +1,12 @@
 package org.mimirdb.caveats
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.expressions.Literal
 
 case class Caveat(
   message: String,
   family: Option[String],
-  key: Seq[Any]
+  key: Seq[Literal]
 )
 
 object Caveat
@@ -15,7 +16,7 @@ object Caveat
     Caveat(
       message = config.getAs[String](Constants.MESSAGE_ATTRIBUTE),
       family  = family,
-      key     = config.getAs[Seq[Any]](Constants.KEY_ATTRIBUTE)
+      key     = config.getAs[Seq[Any]](Constants.KEY_ATTRIBUTE).map { Literal(_) }
     )
   }
 }

@@ -12,7 +12,7 @@ import org.apache.spark.sql.functions.{ col, lit, when }
 import org.apache.spark.sql.types._
 
 
-import org.mimirdb.caveats.implicits._
+import org.mimirdb.implicits._
 
 class ExpressionSpec 
   extends Specification 

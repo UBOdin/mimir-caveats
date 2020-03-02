@@ -6,7 +6,7 @@ import org.apache.log4j.{ Level, Logger }
 import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
 import org.apache.spark.sql.functions._
 import org.mimirdb.caveats.Constants._
-import org.mimirdb.caveats.implicits._
+import org.mimirdb.caveats._
 
 class LogicalPlanSpec 
   extends Specification 

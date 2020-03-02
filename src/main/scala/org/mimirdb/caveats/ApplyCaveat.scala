@@ -31,7 +31,7 @@ case class ApplyCaveat(
       new SingletonCaveatSet(Caveat( 
         message = message.eval(emptyRow).asInstanceOf[String],
         family = family,
-        key = key.map { _.eval(emptyRow) }
+        key = key.map { _.eval(emptyRow) }.map { Literal(_) }
       ))
     } else {
       new EnumerableCaveatSet(
