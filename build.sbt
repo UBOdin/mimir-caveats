@@ -36,9 +36,9 @@ libraryDependencies ++= Seq(
   "org.specs2"                    %%  "specs2-junit"             % "4.8.2" % "test",
 
   // Spark
-  "org.apache.spark"              %%  "spark-sql"                % "2.4.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
-  "org.apache.spark"              %%  "spark-mllib"              % "2.4.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
-  "org.apache.spark"              %%  "spark-hive"               % "2.4.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-sql"                % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-mllib"              % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-hive"               % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
   "org.apache.hadoop"             %   "hadoop-client"            % "2.8.2" exclude("org.slf4j", "slf4j-log4j12")
 )
 

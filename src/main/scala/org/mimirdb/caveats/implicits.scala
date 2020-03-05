@@ -1,4 +1,4 @@
-package org.mimirdb
+package org.mimirdb.caveats
 
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.{ Column, DataFrame }

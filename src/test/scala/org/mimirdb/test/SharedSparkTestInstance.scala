@@ -1,4 +1,4 @@
-package org.mimirdb.caveats
+package org.mimirdb.test
 
 import org.apache.spark.sql.{ SparkSession, DataFrame, Column }
 

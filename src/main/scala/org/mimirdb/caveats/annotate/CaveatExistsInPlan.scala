@@ -213,7 +213,8 @@ class CaveatExistsInPlan(
           left: LogicalPlan,
           right: LogicalPlan,
           joinType: JoinType,
-          condition: Option[Expression]) =>
+          condition: Option[Expression],
+          hint: JoinHint) =>
       {
         /*
           Normal relational join.  The main gimmick here is that we need to
@@ -272,7 +273,8 @@ class CaveatExistsInPlan(
             rewrittenLeft,
             rewrittenRight,
             joinType,
-            condition
+            condition,
+            hint
           )
         )
       }
@@ -446,7 +448,8 @@ class CaveatExistsInPlan(
               ),
               ret,
               Cross,
-              None
+              None,
+              JoinHint.NONE
             )
           Project(
             plan.output :+ buildAnnotation(

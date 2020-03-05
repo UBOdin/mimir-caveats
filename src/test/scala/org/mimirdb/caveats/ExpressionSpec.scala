@@ -11,8 +11,8 @@ import org.apache.spark.sql.catalyst.plans.logical.Project
 import org.apache.spark.sql.functions.{ col, lit, when }
 import org.apache.spark.sql.types._
 
-
-import org.mimirdb.implicits._
+import org.mimirdb.test._
+import org.mimirdb.caveats.implicits._
 
 class ExpressionSpec
   extends Specification
