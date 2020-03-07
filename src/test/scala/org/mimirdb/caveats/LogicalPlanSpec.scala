@@ -9,18 +9,18 @@ import org.mimirdb.caveats.Constants._
 import org.mimirdb.caveats.implicits._
 import org.mimirdb.caveats.annotate._
 
-class LogicalPlanSpec 
-  extends Specification 
+class LogicalPlanSpec
+  extends Specification
   with SharedSparkTestInstance
 {
   import spark.implicits._
 
-  def trace[T](loggerNames:String*)(op:  => T): T = 
+  def trace[T](loggerNames:String*)(op:  => T): T =
   {
     val loggers = loggerNames.map { Logger.getLogger(_) }
     val oldLevels = loggers.map { _.getLevel }
     loggers.foreach { _.setLevel(Level.TRACE) }
-    
+
     val ret: T = op
     for((logger, oldLevel) <- loggers.zip(oldLevels)){
       logger.setLevel(oldLevel)
@@ -29,13 +29,13 @@ class LogicalPlanSpec
   }
 
   def annotate[T](
-    input: DataFrame, 
-    trace: Boolean = false, 
+    input: DataFrame,
+    trace: Boolean = false,
     pedantic: Boolean = true
-  )( op : Seq[(Boolean, Map[String,Boolean])] => T) =
+  )( op : Seq[((Int,Int,Int), Map[String,(String,String,String)])] => T) =
   {
     val annotated = Caveats.annotate(input, CaveatExists(
-                                                trace = trace, 
+                                                trace = trace,
                                                 pedantic = pedantic))
     if(trace){
       println("------ FINAL ------")
@@ -49,41 +49,58 @@ class LogicalPlanSpec
          val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
          if(trace){ println( "ROW: "+row ) }
          (
-           annotation.getAs[Boolean](ROW_FIELD),
+           rowAnnToTup(annotation.getAs[Row](ROW_FIELD)),
            attributes.schema
                      .fields
                      .map { _.name }
-                     .map { name => name -> attributes.getAs[Boolean](name) }
+                     .map { name => name -> attrValAndAnnToTup(row, attributes, name) }
                      .toMap
          )
        }
     )
   }
 
+  def rowAnnToTup(r: Row): (Int,Int,Int) =
+    r.schema.fields
+      .map { _.name }
+      .map { name => r.getAs[Int](name) }
+      match { case a :: b :: c :: Nil => (a,b,c) }
+
+  def attrValAndAnnToTup(r: Row, attrAnns: Row, attr: String)
+      : (String,String,String) =
+    attrAnns.schema.fields
+      .map( _.name)
+      .map { name => (
+                      attrAnns.getAs[Row](name).getAs[String](Constants.UPPER_BOUND),
+                      r.getAs[String](name),
+                      attrAnns.getAs[Row](name).getAs[String](Constants.LOWER_BOUND)
+                     )
+           }
+
   "DataFrame Annotations" >> {
 
     "support simple operators without caveats" >> {
       annotate(
-        df.select()
-      ) { result => 
+        dfr.select()
+      ) { result =>
         result.map { _._1 } must be equalTo(Seq(false, false, false, false, false, false, false))
       }
 
       annotate(
-        df.filter { $"A" =!= 1 }
-      ) { result => 
+        dfr.filter { $"A" =!= 1 }
+      ) { result =>
           result.map { _._1 } must be equalTo(Seq(false, false, false))
       }
     }
 
     "support aggregates without caveats" >> {
       annotate(
-        df.select( sum($"A") )
+        dfr.select( sum($"A") )
       ) { result =>
         result.map { _._1 } must be equalTo(Seq(false))
       }
       annotate(
-        df.select( $"A", $"B".cast("int").as("B") )
+        dfr.select( $"A", $"B".cast("int").as("B") )
           .groupBy($"A").sum("B")
         // ,trace = true
       ) { result =>
@@ -93,7 +110,7 @@ class LogicalPlanSpec
 
     "support order by/limit without caveats" >> {
       annotate(
-        df.sort( $"A" )
+        dfr.sort( $"A" )
           .limit(2)
       ) { result =>
         result.map { _._1 } must be equalTo(Seq(false, false))
@@ -101,11 +118,11 @@ class LogicalPlanSpec
       }
 
       annotate(
-        df.select( $"A", $"B".cast("int").as("B"))
+        dfr.select( $"A", $"B".cast("int").as("B"))
           .groupBy($"A").agg( sum($"B").as("B") )
           .sort( $"B".desc )
           .limit(1)
-      ) { result => 
+      ) { result =>
         result.map { _._1 } must be equalTo(Seq(false))
         result.map { _._2("A") } must be equalTo(Seq(false))
       }
@@ -113,7 +130,7 @@ class LogicalPlanSpec
 
     "support projection with caveats" >> {
       annotate(
-        df.limit(3)
+        dfr.limit(3)
           .select( $"A".caveat("An Issue!").as("A"), $"B" )
       ) { result =>
         result.map { _._1 } must be equalTo(Seq(false, false, false))
@@ -121,8 +138,8 @@ class LogicalPlanSpec
         result.map { _._2("B") } must be equalTo(Seq(false, false, false))
       }
       annotate(
-        df.limit(3)
-          .select( 
+        dfr.limit(3)
+          .select(
             when($"A" === 1, $"A".caveat("A=1"))
               .otherwise($"A").as("A"),
             $"B"
@@ -136,14 +153,14 @@ class LogicalPlanSpec
 
     "support selection with caveats" >> {
       annotate(
-        df.filter { ($"A" === 1).caveat("Is this right?") }
+        dfr.filter { ($"A" === 1).caveat("Is this right?") }
       ) { result =>
         result.map { _._1 } must be equalTo(Seq(true, true, true, true))
         result.map { _._2("A") } must be equalTo(Seq(false, false, false, false))
       }
 
       annotate(
-        df.select(
+        dfr.select(
           when($"B" === 2, $"B".caveat("Huh?"))
             .otherwise($"B").as("B"),
           $"A"
@@ -158,21 +175,21 @@ class LogicalPlanSpec
 
     "support aggregation with caveats" >> {
       annotate(
-        df.select(
+        dfr.select(
           $"A", $"B",
           when($"C" === 1, $"C".caveat("Sup."))
             .otherwise($"C").as("C")
         ).groupBy("A")
          .agg( sum($"C").as("C") )
          .sort($"A")
-      ) { result => 
+      ) { result =>
         result.map { _._1 } must be equalTo(Seq(false, false, false))
         result.map { _._2("A") } must be equalTo(Seq(false, false, false))
         result.map { _._2("C") } must be equalTo(Seq(true, true, false))
       }
 
       annotate(
-        df.select(
+        dfr.select(
           $"A", $"B",
           when($"C" === 1, $"C".caveat("Dude."))
             .otherwise($"C").as("C")
@@ -181,10 +198,10 @@ class LogicalPlanSpec
          .agg( sum($"C").as("C") )
          .sort($"A")
         // ,trace=true
-      ) { result => 
+      ) { result =>
         // 1,2,3
         // 1,3,1* !
-        // 1,2, 
+        // 1,2,
         // 1,4,2
         //   `----> 1, 6*
         // 2, ,1* !
@@ -199,9 +216,9 @@ class LogicalPlanSpec
       }
 
       annotate(
-        df.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
+        dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
           .select(
-            $"A", 
+            $"A",
             when($"B" === 2, $"B".caveat("Dude."))
               .otherwise($"B").as("B"),
             when($"C" === 1, $"C".caveat("Dude."))
@@ -212,11 +229,11 @@ class LogicalPlanSpec
           .agg( sum($"A").as("A") )
           .sort($"C")
         // ,trace = true
-      ) { result => 
+      ) { result =>
         // 1,2*,x  !
         //   `----> x, 1* !
-        // 1,3 ,1* 
-        // 2,  ,1* 
+        // 1,3 ,1*
+        // 2,  ,1*
         // 2,2*,1* !
         //   `----> 1, 3* !
         // 1,4 ,2
@@ -230,15 +247,15 @@ class LogicalPlanSpec
 
         // skipping the following test due to limitations of Spark's aggregate
         // representation: distinguishing group-by fragments of an attribute
-        // from the rest is painful, so "C" is going to unfortunately get 
+        // from the rest is painful, so "C" is going to unfortunately get
         // attribute-annotated as well.
         // result.map { _._2("C") } must be equalTo(Seq(false, false, false, false, false))
       }
 
       annotate(
-        df.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
+        dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
           .select(
-            $"A", 
+            $"A",
             when($"B" === 2, $"B".caveat("Dude."))
               .otherwise($"B").as("B"),
             when($"C" === 1, $"C".caveat("Dude."))
@@ -250,11 +267,11 @@ class LogicalPlanSpec
           .sort($"C"),
         pedantic = false
         // ,trace = true
-      ) { result => 
+      ) { result =>
         // 1,2*,x  !
         //   `----> x, 1* !
-        // 1,3 ,1* 
-        // 2,  ,1* 
+        // 1,3 ,1*
+        // 2,  ,1*
         // 2,2*,1* !
         //   `----> 1, 3* !
         // 1,4 ,2

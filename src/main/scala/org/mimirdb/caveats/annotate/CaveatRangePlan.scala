@@ -24,7 +24,7 @@ import org.mimirdb.caveats.Constants._
   *  of the input plan we record an upper and a lower bound on the value of this attribute
   *  across all possible worlds.
   */
-object CaveatRangePlan
+class CaveatRangePlan()
   extends AnnotationInstrumentationStrategy
   with LazyLogging
 {
