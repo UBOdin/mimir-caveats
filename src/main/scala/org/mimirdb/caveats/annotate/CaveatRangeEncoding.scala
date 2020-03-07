@@ -100,8 +100,8 @@ object CaveatRangeEncoding
   def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
     ubExpression(rowAnnotationExpression(annotation))
 
-  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): (Expression,Expression,Expression) =
-    (
+  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr =
+    RangeBoundedExpr(
       rowLBexpression(annotation),
       rowBGexpression(annotation),
       rowUBexpression(annotation)

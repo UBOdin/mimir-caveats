@@ -13,6 +13,31 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.boundedtypes._
 
+case class RangeBoundedExpr(lb: Expression, bg: Expression, ub: Expression)
+{
+  def toTuple(): (Expression,Expression,Expression) = (lb,bg,ub)
+  def toSeq(): Seq[Expression] = Seq(lb,bg,ub)
+  def map(f: Expression => Expression): RangeBoundedExpr = RangeBoundedExpr(f(lb), f(bg), f(ub))
+  def applyIndividually(flb: Expression => Expression,
+    fbg: Expression => Expression,
+    fub: Expression => Expression)
+      : RangeBoundedExpr =
+    RangeBoundedExpr(flb(lb), fbg(bg), fub(ub))
+}
+
+object RangeBoundedExpr
+{
+
+  def makeCertain(e: Expression): RangeBoundedExpr = RangeBoundedExpr(e,e,e)
+  def fromBounds(lb: Expression, ub: Expression): RangeBoundedExpr = RangeBoundedExpr(lb,Literal(1),ub)
+  def fromTuple(t: (Expression,Expression,Expression)): RangeBoundedExpr = RangeBoundedExpr(t._1,t._2,t._3)
+  def fromSeq(s: Seq[Expression]): RangeBoundedExpr = {
+    //TODO check length
+    assert(s.length == 3)
+    RangeBoundedExpr(s(0),s(1),s(2))
+  }
+}
+
 /**
  * The [apply] method of this class is used to derive the annotation for an
  * input expression.  Specifically, [apply] (and by extension [annotate])
@@ -53,7 +78,7 @@ object CaveatRangeExpression
    * @param   expr  The expression to calculate bounds for
    * @return        A triple of expressions that computes lower, best guess, and upper bounds of the value of the input expression
    **/
-  def apply(expr: Expression): (Expression, Expression, Expression) =
+  def apply(expr: Expression): RangeBoundedExpr =
   {
     // Derive a set of conditions under which  the input expression will be
     // caveatted.  By default, this occurs whenever a caveat is present or when
@@ -61,13 +86,13 @@ object CaveatRangeExpression
     expr match {
 
       // Access value and bounds stored in Caveat
-      case caveat: CaveatRange => (caveat.lb, caveat.value, caveat.ub)
+      case caveat: CaveatRange => RangeBoundedExpr(caveat.lb, caveat.value, caveat.ub)
 
       // the bounds of a Literal are itself
-      case l: Literal => (l,l,l)
+      case l: Literal => RangeBoundedExpr.makeCertain(l)
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => (CaveatRangeEncoding.lbExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a)),
+      case a: Attribute => RangeBoundedExpr(CaveatRangeEncoding.lbExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a)),
         CaveatRangeEncoding.bgAttrExpression(a),
         CaveatRangeEncoding.ubExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a))
       )
@@ -77,13 +102,13 @@ object CaveatRangeExpression
 
       // comparison operators
       case EqualTo(left,right) => {
-        val (llb, lbg, lub) = apply(left)
-        val (rlb, rbg, rub) = apply(right)
+        val l = apply(left)
+        val r = apply(right)
 
-        (
-          And(EqualTo(llb,rub),EqualTo(lub,rlb)),
+        RangeBoundedExpr(
+          And(EqualTo(l.lb,r.ub),EqualTo(l.ub,r.lb)),
           expr,
-          And(LessThanOrEqual(llb,rub),LessThanOrEqual(rlb,lub))
+          And(LessThanOrEqual(l.lb,r.ub),LessThanOrEqual(r.lb,l.ub))
         )
       }
 
@@ -96,10 +121,10 @@ object CaveatRangeExpression
       case Add(left,right) => liftPointwise(expr)
 
       case Subtract(left,right) => {
-        val (llb, lbg, lub) = apply(left)
-        val (rlb, rbg, rub) = apply(right)
+        val l = apply(left)
+        val r = apply(right)
 
-        (Subtract(llb,rub),expr,Subtract(lub,rlb))
+        RangeBoundedExpr(Subtract(l.lb,r.ub),expr,Subtract(l.ub,r.lb))
       }
 
       case Multiply(left,right) => minMaxAcrossAllCombinations(Multiply(left,right))
@@ -116,30 +141,30 @@ object CaveatRangeExpression
           val certainFalse = isCertainFalse(cav_predicate)
 
           //TODO for certain conditions we can omit the third clause. Add inference for detecting whether an expression's value will be certain
-          (
+          RangeBoundedExpr(
             // If certainly true or false then only the then or else clause matters
             // otherwise we have to take the minimum or maximum over then and else
             CaseWhen(
               Seq(
                 // check for certainly true, if yes then return then lower bound
-                (certainTrue, getLB(cav_then)),
+                (certainTrue, cav_then.lb),
                 // check for certainly false, if yes then return else lower bound
-                (certainFalse, getLB(cav_else))
+                (certainFalse, cav_else.lb)
               ),
               // if predicate result is uncertain the take the minimum of then and else lower bounds
-              Least(Seq(getLB(cav_then), getLB(cav_else)))
+              Least(Seq(cav_then.lb, cav_else.lb))
             ),
             expr,
             // symmetric to lower bound
             CaseWhen(
               Seq(
                 // check for certainly true, if yes then return then upper bound
-                (certainTrue, getUB(cav_then)),
+                (certainTrue, cav_then.ub),
                 // check for certainly false, if yes then return else upper bound
-                (certainFalse, getUB(cav_else))
+                (certainFalse, cav_else.ub)
               ),
               // if predicate result is uncertain the take the maximum of then and else upper bounds
-               Greatest(Seq(getUB(cav_then), getUB(cav_else)))
+               Greatest(Seq(cav_then.ub, cav_else.ub))
             )
           )
         }
@@ -163,10 +188,7 @@ object CaveatRangeExpression
       // }
 
       /* logical operators */
-      case Not(child) => {
-        val (lb,bg,ub) = apply(child)
-        (Not(ub), Not(bg), Not(lb))
-      }
+      case Not(child) => apply(child).map(x => Not(x))
 
       case And(lhs, rhs) => liftPointwise(expr)
 
@@ -178,32 +200,28 @@ object CaveatRangeExpression
   }
 
   // lift to (lub,rlb) and (llb,rub)
-  def liftOrderComparison(op: BinaryExpression) : (Expression,Expression,Expression) = {
+  def liftOrderComparison(op: BinaryExpression) : RangeBoundedExpr = {
     val (left,right) = (op.children(0), op.children(1))
-    val (llb, lbg, lub) = apply(left)
-    val (rlb, rbg, rub) = apply(right)
+    val l = apply(left)
+    val r = apply(right)
 
-    (
-      op.withNewChildren(Seq(lub,rlb)),
+    RangeBoundedExpr(
+      op.withNewChildren(Seq(l.ub,r.lb)),
       op,
-      op.withNewChildren(Seq(llb,rub))
+      op.withNewChildren(Seq(l.lb,r.ub))
     )
   }
 
   //TODO should not duplicate names!
-  def preserveName(expr: NamedExpression): (NamedExpression,NamedExpression,NamedExpression) =
+  def preserveName(expr: NamedExpression): RangeBoundedExpr =
   {
-    val (lb,bg,ub) = apply(expr)
-    (Alias(lb, expr.name)(), Alias(bg, expr.name)(), Alias(ub, expr.name)())
+    val e = apply(expr)
+    RangeBoundedExpr(Alias(e.lb, expr.name)(), Alias(e.bg, expr.name)(), Alias(e.ub, expr.name)())
   }
 
   // map a triple of boooleans into a triple of Int (Row annotations)
-  def booleanToRowAnnotation(cond: (Expression, Expression, Expression)): (Expression, Expression, Expression) =
-  {
-    cond match { case (lb,bg,ub) =>
-      (boolToInt(lb), boolToInt(bg), boolToInt(ub))
-    }
-  }
+  def booleanToRowAnnotation(cond: RangeBoundedExpr): RangeBoundedExpr =
+    cond.map(boolToInt)
 
   // replace references to attribute bounds annotations based on a mapping from attribute to annotation attribute
   // This is used for binary operators (join) where the Expression we are rewritting may refer to multiple children
@@ -244,9 +262,7 @@ object CaveatRangeExpression
     If(EqualTo(bool, Literal(true)), Literal(1), Literal(0))
   }
 
-  def neutralRowAnnotation() : (Expression, Expression, Expression) = {
-    (Literal(1), Literal(1), Literal(1))
-  }
+  def neutralRowAnnotation(): RangeBoundedExpr = RangeBoundedExpr.makeCertain(Literal(1))
 
   // recursive function to deal with CASE WHEN clauses. For CASE WHEN (p1 o1) (p2 o2) ... e,
   // we calculate the lower bound (symmetrically the upper bound) as
@@ -254,7 +270,7 @@ object CaveatRangeExpression
   //           (certainfalse(p1) (CASE WHEN (certaintrue(p2) LB(o2))
   //                              ...
   //           least(LB(o1), (CASE WHEN (certaintrue(p2) ...
-  private def whenCases(when: CaseWhen): (Expression, Expression, Expression) =
+  private def whenCases(when: CaseWhen): RangeBoundedExpr =
     when match {
       case CaseWhen(Seq(), None) => null
       // a single when then clause
@@ -265,17 +281,17 @@ object CaveatRangeExpression
         assert(when.resolved)
         val resultDT = when.dataType
         assert(BoundedDataType.isBoundedType(resultDT))
-        (
+        RangeBoundedExpr(
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getLB(predB))
+              (isCertainTrue(predB), predB.lb)
             ),
             Some(Literal(BoundedDataType.domainMin(resultDT)))
           ),
           when,
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getUB(predB))
+              (isCertainTrue(predB), predB.ub)
             ),
             Some(Literal(BoundedDataType.domainMax(resultDT)))
           )
@@ -284,28 +300,28 @@ object CaveatRangeExpression
       // an else clause only
       case CaseWhen(Seq(), Some(els)) => {
             val elsB = apply(els)
-            ( getLB(elsB), els, getUB(elsB) )
+            RangeBoundedExpr( elsB.lb, els, elsB.ub )
           }
       case CaseWhen((pred, outcome) +: otherClauses, els) => {
         val otherBounds = whenCases(CaseWhen(otherClauses, els))
         val predB = apply(pred)
         val outcomeB = apply(outcome)
 
-        (
+        RangeBoundedExpr(
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getLB(outcomeB)),
-              (isCertainFalse(predB), getLB(otherBounds))
+              (isCertainTrue(predB), outcomeB.lb),
+              (isCertainFalse(predB), otherBounds.lb)
             ),
-            Least(Seq(getLB(outcomeB), getLB(otherBounds)))
+            Least(Seq(outcomeB.lb, otherBounds.lb))
           ),
           when,
           CaseWhen(
             Seq(
-              (isCertainTrue(predB), getUB(outcomeB)),
-              (isCertainFalse(predB), getUB(otherBounds))
+              (isCertainTrue(predB), outcomeB.ub),
+              (isCertainFalse(predB), otherBounds.ub)
             ),
-            Greatest(Seq(getUB(outcomeB), getUB(otherBounds)))
+            Greatest(Seq(outcomeB.ub, otherBounds.ub))
           )
         )
       }
@@ -313,25 +329,24 @@ object CaveatRangeExpression
 
   // calculate bounds as the min/max over all combinations of applying the
   // operator to lower/upper bound of left and right input
-  private def minMaxAcrossAllCombinations(e: BinaryExpression):
-      (Expression, Expression, Expression) = {
-    val (l,r) = (e.children(0), e.children(1))
-    val (llb,lbg,lub) = apply(l)
-    val (rlb,rbg,rub) = apply(r)
+  private def minMaxAcrossAllCombinations(e: BinaryExpression): RangeBoundedExpr = {
+    val (left,right) = (e.children(0), e.children(1))
+    val l = apply(left)
+    val r = apply(right)
 
-    (
-      Least(Seq(e.withNewChildren(Seq(llb,rlb)),e.withNewChildren(Seq(llb,rub)),e.withNewChildren(Seq(lub,rlb)),e.withNewChildren(Seq(lub,rub)))),
+    RangeBoundedExpr(
+      Least(Seq(e.withNewChildren(Seq(l.lb,r.lb)),e.withNewChildren(Seq(l.lb,r.ub)),e.withNewChildren(Seq(l.ub,r.lb)),e.withNewChildren(Seq(l.ub,r.ub)))),
       e,
-      Greatest(Seq(e.withNewChildren(Seq(llb,rlb)),e.withNewChildren(Seq(llb,rub)),e.withNewChildren(Seq(lub,rlb)),e.withNewChildren(Seq(lub,rub))))
+      Greatest(Seq(e.withNewChildren(Seq(l.lb,r.lb)),e.withNewChildren(Seq(l.lb,r.ub)),e.withNewChildren(Seq(l.ub,r.lb)),e.withNewChildren(Seq(l.ub,r.ub))))
     )
   }
 
-  private def isCertainTrue(e: (Expression,Expression,Expression)): Expression = {
-    getLB(e)
+  private def isCertainTrue(e: RangeBoundedExpr): Expression = {
+    e.lb
   }
 
-  private def isCertainFalse(e: (Expression,Expression,Expression)): Expression = {
-    negate(getUB(e))
+  private def isCertainFalse(e: RangeBoundedExpr): Expression = {
+    negate(e.ub)
   }
 
   private def negate(e: Expression) =
@@ -341,34 +356,24 @@ object CaveatRangeExpression
       case _ => Not(e)
     }
 
-  def applyPointwiseToTuple3[In,Out](
-    f: In => Out,
-    input: (In, In, In))
-      : (Out, Out, Out) =
-  {
-    (
-      f(input._1),
-      f(input._2),
-      f(input._3)
-    )
-  }
+  // def applyPointwiseToTuple3[In,Out](
+  //   f: In => Out,
+  //   input: (In, In, In))
+  //     : (Out, Out, Out) =
+  // {
+  //   (
+  //     f(input._1),
+  //     f(input._2),
+  //     f(input._3)
+  //   )
+  // }
 
-  def liftPointwise(e:Expression) =
+  def liftPointwise(e:Expression): RangeBoundedExpr =
   {
       val caveatedChildren = e.children.map { apply(_) }
-      (e.withNewChildren(caveatedChildren.map(getLB)),
-        e.withNewChildren(caveatedChildren.map(getBG)),
-        e.withNewChildren(caveatedChildren.map(getUB))
+      RangeBoundedExpr(e.withNewChildren(caveatedChildren.map(x => x.lb)),
+        e.withNewChildren(caveatedChildren.map(x => x.bg)),
+        e.withNewChildren(caveatedChildren.map(x => x.ub))
       )
   }
-
-  private def getLB(e:(Expression,Expression,Expression)): Expression =
-    e._1
-
-  private def getBG(e:(Expression,Expression,Expression)): Expression =
-    e._2
-
-  private def getUB(e:(Expression,Expression,Expression)): Expression =
-    e._3
-
 }
