@@ -3,6 +3,7 @@ package org.mimirdb.caveats
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
+import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate.{
   AnnotationException,
   CaveatExistsInExpression,

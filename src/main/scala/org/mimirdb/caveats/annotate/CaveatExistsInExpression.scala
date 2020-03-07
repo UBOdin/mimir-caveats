@@ -210,9 +210,6 @@ class CaveatExistsInExpression(
         // deterministically, this means that we should just be able to
         // propagate the mode... and the other places in the tree where the
         // expression appears will just play nice.... I hope?
-        //
-        // TODO: Spark 3 appears to introduce a BoolOr aggregate.  Use that
-        //       instead of the Sum + Comparison hack below
         if(!expectAggregate){
           throw new IllegalArgumentException("Unexpected aggregate within an aggregate")
         }

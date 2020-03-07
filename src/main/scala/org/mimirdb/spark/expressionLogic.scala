@@ -28,10 +28,10 @@ object expressionLogic
       case _ => If(i, t, e)
     }
 
-  def aggregateBoolOr(e:Expression) =
+  def aggregateBoolOr(e:Expression) = 
     e match {
       case Literal(false, BooleanType) => Literal(false)
-      case _ => 
+      case _ => //BoolOr("bool_or", e)
         GreaterThan(
           AggregateExpression(
             Sum(foldIf(e){ Literal(1) }{ Literal(0) }),

@@ -4,7 +4,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.types.StringType
 import org.mimirdb.caveats.ApplyCaveat
 
-object CaveatedMergeWith
+object CaveatedMerge
 {
   def apply(
     e1: Expression,

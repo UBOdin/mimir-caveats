@@ -304,34 +304,34 @@ class CaveatRangePlan()
     plan: Join
   ): LogicalPlan =
     plan match {
-      case Join(left,right,Cross,c) => {
+      case Join(left,right,Cross,c,h) => {
         rewriteInnerJoin(plan)
       }
-      case Join(left,right,Inner,c) => {
+      case Join(left,right,Inner,c,h) => {
         rewriteInnerJoin(plan)
       }
-      case Join(left,right,ExistenceJoin(_),c) => { // need to be dealt with separatly?
+      case Join(left,right,ExistenceJoin(_),c,h) => { // need to be dealt with separatly?
         ???
       }
-      case Join(left,right,LeftOuter,c) => {
+      case Join(left,right,LeftOuter,c,h) => {
         ???
       }
-      case Join(left,right,RightOuter,c) => {
+      case Join(left,right,RightOuter,c,h) => {
         ???
       }
-      case Join(left,right,FullOuter,c) => {
+      case Join(left,right,FullOuter,c,h) => {
         ???
       }
-      case Join(left,right,LeftSemi,c) => {
+      case Join(left,right,LeftSemi,c,h) => {
         ???
       }
-      case Join(left,right,LeftAnti,c) => {
+      case Join(left,right,LeftAnti,c,h) => {
         ???
       }
-      case Join(left,right,UsingJoin(_,_),c) => {
+      case Join(left,right,UsingJoin(_,_),c,h) => {
         ???
       }
-      case Join(left,right,NaturalJoin(_),c) => { //need to match for subtypes (inner, or left, right, full outer)
+      case Join(left,right,NaturalJoin(_),c,h) => { //need to match for subtypes (inner, or left, right, full outer)
         ???
       }
     }
@@ -343,7 +343,7 @@ class CaveatRangePlan()
   private def rewriteInnerJoin(
     plan: Join
   ): LogicalPlan =
-    plan match { case Join(left,right,joinType,condition) =>
+    plan match { case Join(left,right,joinType,condition,hint) =>
       {
           // rename the annotation attribute from the left and right input
           val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
@@ -398,7 +398,9 @@ class CaveatRangePlan()
           val rewrittenJoin = Join(rewrLeft,
             rewrRight,
             joinType,
-            rewrittenCondition)
+            rewrittenCondition,
+            JoinHint.NONE
+          )
 
           // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
           val rowAnnotations = (

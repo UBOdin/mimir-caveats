@@ -52,7 +52,6 @@ import org.mimirdb.spark.expressionLogic.{
  *     produce the slice defined by the input criteria.  
  */
 
-
 object EnumeratePlanCaveats
 {
   /**
@@ -256,7 +255,7 @@ object EnumeratePlanCaveats
       }
 
       /*********************************************************/
-      case Join(left, right, joinType, conditionMaybe) => 
+      case Join(left, right, joinType, conditionMaybe, hint) => 
       {
 
         val rowAndCondition = row.flatMap { r => conditionMaybe.map { (r, _) } }
