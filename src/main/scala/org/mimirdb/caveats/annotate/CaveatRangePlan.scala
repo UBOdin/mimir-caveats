@@ -121,7 +121,8 @@ class CaveatRangePlan()
           rewrittenChild
         )
 
-        val projectionExprs = newFilter.output :+ buildAnnotation(
+        val projectionExprs = newFilter.output.filter(_.name != ANNOTATION_ATTRIBUTE) :+
+          buildAnnotation(
             plan = newFilter,
             rowAnnotation =
               CaveatRangeExpression.booleanToRowAnnotation(conditionB)
@@ -345,82 +346,96 @@ class CaveatRangePlan()
   ): LogicalPlan =
     plan match { case Join(left,right,joinType,condition,hint) =>
       {
-          // rename the annotation attribute from the left and right input
-          val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
-          val RIGHT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE+"_RIGHT"
-          val rewrLeft = Project(
-            left.output :+ Alias(
-              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
-              LEFT_ANNOT_ATTR)(),
-            apply(left)
-          )
-          val rewrRight = Project(
-            left.output :+ Alias(
-              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
-              RIGHT_ANNOT_ATTR)(),
-            apply(right)
-          )
+        // rename the annotation attribute from the left and right input
+        val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
+        val RIGHT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE+"_RIGHT"
+        val rewrLeft = Project(
+          left.output :+ Alias(
+            UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+            LEFT_ANNOT_ATTR)(),
+          apply(left)
+        )
+        val rewrRight = Project(
+          right.output :+ Alias(
+            UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+            RIGHT_ANNOT_ATTR)(),
+          apply(right)
+        )
 
-          // store which attribute corresponds to which annotation attribute
-          val attrMap = (left.output.map( x => x.name -> LEFT_ANNOT_ATTR) ++
-                        right.output.map( x => x.name -> RIGHT_ANNOT_ATTR)).toMap
+        // store which attribute corresponds to which annotation attribute
+        val attrMap = (left.output.map( x => x.name -> LEFT_ANNOT_ATTR) ++
+          right.output.map( x => x.name -> RIGHT_ANNOT_ATTR)).toMap
 
-          // rewrite condition
-          val conditionB = condition.map(CaveatRangeExpression.apply)
+        // rewrite condition
+        val conditionB = condition.map(CaveatRangeExpression.apply)
 
-          // if join condition is possibly true for a tuple pair, then we have to return the tuple pair
-          val rewrittenCondition = conditionB.map(x => x.ub)
+        // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
+        val conditionBadapted = conditionB.map( x => RangeBoundedExpr(
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.lb, attrMap),
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.bg, attrMap),
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.ub, attrMap)
+        ))
 
-          // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
-          val conditionBadapted = conditionB.map( x => RangeBoundedExpr(
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(x.lb, attrMap),
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(x.bg, attrMap),
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(x.ub, attrMap)
-              ))
+        // if join condition is possibly true for a tuple pair, then we have to return the tuple pair
+        val rewrittenCondition = conditionBadapted.map(x => x.ub)
 
-          // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
+        // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
         val annotConditionToRow: RangeBoundedExpr = conditionBadapted
           .map(CaveatRangeExpression.booleanToRowAnnotation)
           .getOrElse(CaveatRangeExpression.neutralRowAnnotation())
 
-          // non-annotation attributes
-          val attributes =
-            left.output.map  { (LEFT_ANNOT_ATTR, _)  } ++
-            right.output.map { (RIGHT_ANNOT_ATTR, _) }
+        // non-annotation attributes
+        val attributes =
+          left.output.map  { (LEFT_ANNOT_ATTR, _)  } ++
+          right.output.map { (RIGHT_ANNOT_ATTR, _) }
 
-          // join rewritten inputs after renaming the join attribute
-          val rewrittenJoin = Join(rewrLeft,
-            rewrRight,
-            joinType,
-            rewrittenCondition,
-            JoinHint.NONE
+        // join rewritten inputs after renaming the join attribute
+        val rewrittenJoin = Join(rewrLeft,
+          rewrRight,
+          joinType,
+          rewrittenCondition,
+          JoinHint.NONE
+        )
+
+        // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
+        val rowAnnotations = RangeBoundedExpr.fromSeq(annotConditionToRow
+          .zip(Seq(
+            CaveatRangeEncoding.rowLBexpression(_),
+            CaveatRangeEncoding.rowBGexpression(_),
+            CaveatRangeEncoding.rowUBexpression(_))
           )
-
-          // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
-          val rowAnnotations = annotConditionToRow.map { x =>
+          .map { case (x,f) =>
             Multiply(
               Multiply(
-                CaveatRangeEncoding.rowLBexpression(LEFT_ANNOT_ATTR),
-                CaveatRangeEncoding.rowLBexpression(RIGHT_ANNOT_ATTR)
+                f(LEFT_ANNOT_ATTR),
+                f(RIGHT_ANNOT_ATTR)
               ),
               x
             )
           }
+        )
 
-          val annotations = buildAnnotation(
-            plan = rewrittenJoin,
-            rowAnnotation = rowAnnotations,
-            colAnnotations = null //TODO
+        val colAnnotations = attrMap.toSeq.map { case (x,y) =>
+          x ->
+          RangeBoundedExpr.fromBounds(
+            CaveatRangeEncoding.attrLBexpression(x,y),
+            CaveatRangeEncoding.attrUBexpression(x,y)
           )
+        }
 
-          // calculate multiplicities
-          Project(
-            rewrittenJoin.output :+ annotations,
-            rewrittenJoin
-          )
+        val annotations = buildAnnotation(
+          plan = rewrittenJoin,
+          rowAnnotation = rowAnnotations,
+          colAnnotations = colAnnotations
+        )
+
+        // calculate multiplicities
+        Project(
+          rewrittenJoin.output.filterNot(x => x.name == LEFT_ANNOT_ATTR || x.name == RIGHT_ANNOT_ATTR) :+ annotations,
+          rewrittenJoin
+        )
       }
     }
-
 
   /** Group input based on best-guess values and merge row annotations.
     *
@@ -491,15 +506,49 @@ class CaveatRangePlan()
 
   def constructAnnotUsingProject(
     plan: LogicalPlan,
-    rowAnnotation: RangeBoundedExpr,
-    colAnnotations: Seq[(String,RangeBoundedExpr)],
+    rowAnnotation: RangeBoundedExpr = null,
+    colAnnotations: Seq[(String,RangeBoundedExpr)] = null,
+    projExprs: Seq[NamedExpression] = null,
     annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE)
       : LogicalPlan =
   {
+    val pExprs = if (projExprs == null) { plan.output.filterNot( _.name == annotationAttr) } else projExprs
     Project(
-      plan.output :+ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
+      pExprs :+ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
       plan
     )
+  }
+
+  override def translateFromUncertaintyModel(plan: LogicalPlan, model: UncertaintyModel) =
+    model match {
+      case TupleIndependentProbabilisticDatabase(probAttr) => {
+        tipToRange(plan, probAttr)
+      }
+      case XDB(idAttr, probAttr) => {
+        xdbToRange(plan, idAttr, probAttr)
+      }
+    }
+
+  def tipToRange(plan: LogicalPlan, probAttr: String): LogicalPlan = {
+    assert(plan.output.exists(_.name == probAttr))
+    val normalAttrs = plan.output.filterNot(_.name == probAttr)
+    val normalAttrNames = normalAttrs.map(_.name)
+    constructAnnotUsingProject(plan,
+      rowAnnotation = RangeBoundedExpr(
+        // certain only with 1.0 probability
+        CaseWhen(Seq((EqualTo(UnresolvedAttribute(probAttr), Literal(1.0)), Literal(1))), Literal(0)),
+        // best guess when probability >= 0.5
+        CaseWhen(Seq((GreaterThan(UnresolvedAttribute(probAttr), Literal(0.5)), Literal(1))), Literal(0)),
+        Literal(1)
+      ),
+      colAnnotations = normalAttrNames
+        .map { a => a -> RangeBoundedExpr.makeCertain(UnresolvedAttribute(a)) },
+      projExprs = normalAttrs
+    )
+  }
+
+  def xdbToRange(plan: LogicalPlan, idAttr: String, probAttr: String): LogicalPlan = {
+    ???
   }
 
   /** Build up a value of the nested annotation attribute from its components.

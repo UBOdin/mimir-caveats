@@ -108,7 +108,7 @@ class RangeExpressionSpec
         )
     ).isEmpty
 
-  def rangeTest(e: Column)
+  def rangeTest(e: Column, trace: Boolean = false)
     (inrowann: (Int,Int,Int), infields: (Any,Any,Any)*)
     (outrowann: (Int,Int,Int), outfields: (Any,Any,Any)*)
       : Boolean =
@@ -116,9 +116,21 @@ class RangeExpressionSpec
     val indf = rangeRowDF(inrowann, infields:_*)
     // indf.show(1,100)
     val outdf = rangeRowDF(outrowann, outfields:_*)
-    // outdf.show(1,100)
+
     val eresult = rangeAnnotate(e, indf)
-    // eresult.show(1,100)
+
+    if (trace)
+    {
+      println(s"EXPRESSION: $e")
+      println("INPUT DATA:")
+      indf.show(1,100)
+      println("EXPECTED OUTPUT DATA:")
+      outdf.show(1,100)
+      println("ACTUAL OUTPUT DATA:")
+      eresult.show(1,100)
+      println("REWRITTTEN QUERY PLAN DATA:")
+      println(eresult.queryExecution.analyzed)
+    }
     dfEquals(eresult, outdf)
   }
 

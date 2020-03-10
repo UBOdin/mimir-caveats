@@ -108,6 +108,26 @@ object CaveatRangeEncoding
     )
 
 
+  def attrLBexpression(attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
+    lbExpression(
+      UnresolvedExtractValue(
+        allAttributeAnnotationsExpression(annotation),
+        Literal(attrName)
+      )
+    )
+
+  def attrUBexpression(attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
+    ubExpression(
+      UnresolvedExtractValue(
+        allAttributeAnnotationsExpression(annotation),
+        Literal(attrName)
+      )
+    )
+
   def lbExpression(e: Expression): Expression =
     UnresolvedExtractValue(
       e,

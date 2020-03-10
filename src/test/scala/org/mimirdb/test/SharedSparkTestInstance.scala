@@ -17,13 +17,18 @@ object SharedSparkTestInstance
   lazy val dfs = /* S(D int, E int) */
     spark.read
       .format("csv")
-      .option("header", "false")
+      .option("header", "true")
       .load("test_data/s.csv")
   lazy val dft = /* T(F int, G int) */
     spark.read
       .format("csv")
-      .option("header", "false")
+      .option("header", "true")
       .load("test_data/t.csv")
+  lazy val dftip = /* TIP(A int, B int, P float) */
+    spark.read
+      .format("csv")
+      .option("header", "true")
+      .load("test_data/tip.csv")
 }
 
 trait SharedSparkTestInstance
@@ -32,4 +37,5 @@ trait SharedSparkTestInstance
   lazy val dfr = SharedSparkTestInstance.dfr
   lazy val dfs = SharedSparkTestInstance.dfs
   lazy val dft = SharedSparkTestInstance.dft
+  lazy val dftip = SharedSparkTestInstance.dftip
 }

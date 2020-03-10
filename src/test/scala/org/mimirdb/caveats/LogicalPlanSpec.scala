@@ -34,7 +34,7 @@ class LogicalPlanSpec
     input: DataFrame,
     trace: Boolean = false,
     pedantic: Boolean = true
-  )( op : Seq[((Int,Int,Int), Map[String,(String,String,String)])] => T) =
+  )( op : Seq[(Boolean, Map[String,Boolean])] => T) =
   {
     val annotated = Caveats.annotate(input, CaveatExists(
                                                 trace = trace,
@@ -51,33 +51,16 @@ class LogicalPlanSpec
          val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
          if(trace){ println( "ROW: "+row ) }
          (
-           rowAnnToTup(annotation.getAs[Row](ROW_FIELD)),
+           annotation.getAs[Boolean](ROW_FIELD),
            attributes.schema
                      .fields
                      .map { _.name }
-                     .map { name => name -> attrValAndAnnToTup(row, attributes, name) }
+                     .map { name => name -> attributes.getAs[Boolean](name) }
                      .toMap
          )
        }
     )
   }
-
-  def rowAnnToTup(r: Row): (Int,Int,Int) =
-    r.schema.fields
-      .map { _.name }
-      .map { name => r.getAs[Int](name) }
-      match { case a :: b :: c :: Nil => (a,b,c) }
-
-  def attrValAndAnnToTup(r: Row, attrAnns: Row, attr: String)
-      : (String,String,String) =
-    attrAnns.schema.fields
-      .map( _.name)
-      .map { name => (
-                      attrAnns.getAs[Row](name).getAs[String](Constants.UPPER_BOUND),
-                      r.getAs[String](name),
-                      attrAnns.getAs[Row](name).getAs[String](Constants.LOWER_BOUND)
-                     )
-           }
 
   "DataFrame Annotations" >> {
 

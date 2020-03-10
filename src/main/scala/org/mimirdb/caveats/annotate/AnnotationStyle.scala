@@ -8,6 +8,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   Attribute
 }
 
+import org.mimirdb.caveats.UncertaintyModel
 import org.mimirdb.caveats.Constants._
 import org.apache.spark.sql.types.StringType
 
@@ -24,6 +25,11 @@ trait AnnotationInstrumentationStrategy
 
   // return the type of annotations that are propagated
   def annotationType: AnnotationType
+
+  // translates from a particular type of uncertainty model into this type of annotation
+  def translateFromUncertaintyModel(plan: LogicalPlan, model: UncertaintyModel): LogicalPlan = {
+    throw new AnnotationException(s"translation from $model not supported")
+  }
 }
 
 /*

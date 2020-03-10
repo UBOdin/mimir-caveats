@@ -7,7 +7,7 @@ import org.apache.spark.sql.catalyst.analysis.{
   UnresolvedExtractValue,
   UnresolvedAttribute
 }
-
+import org.apache.spark.unsafe.types.UTF8String
 
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate._
@@ -18,6 +18,14 @@ case class RangeBoundedExpr(lb: Expression, bg: Expression, ub: Expression)
   def toTuple(): (Expression,Expression,Expression) = (lb,bg,ub)
   def toSeq(): Seq[Expression] = Seq(lb,bg,ub)
   def map(f: Expression => Expression): RangeBoundedExpr = RangeBoundedExpr(f(lb), f(bg), f(ub))
+  def zip[B](s: Seq[B]): Seq[(Expression,B)] = this.toSeq().zip(s)
+
+  def applyIndividuallyToBounds(flb: RangeBoundedExpr => Expression,
+    fbg: RangeBoundedExpr => Expression,
+    fub: RangeBoundedExpr => Expression)
+      : RangeBoundedExpr =
+    RangeBoundedExpr(flb(this), fbg(this), fub(this))
+
   def applyIndividually(flb: Expression => Expression,
     fbg: Expression => Expression,
     fub: Expression => Expression)
@@ -188,7 +196,7 @@ object CaveatRangeExpression
       // }
 
       /* logical operators */
-      case Not(child) => apply(child).map(x => Not(x))
+      case Not(child) => apply(child).applyIndividuallyToBounds(x => Not(x.ub), x => Not(x.bg), x => Not(x.lb))
 
       case And(lhs, rhs) => liftPointwise(expr)
 
@@ -232,28 +240,33 @@ object CaveatRangeExpression
   {
     e match {
       case
+        UnresolvedExtractValue(
           UnresolvedExtractValue(
+            UnresolvedAttribute(Seq(Constants.ANNOTATION_ATTRIBUTE)),
+            Literal(b,StringType)
+          ),
+          Literal(attr:UTF8String, StringType)
+        )
+        if b.equals(UTF8String.fromString(Constants.ATTRIBUTE_FIELD))
+        => {
+          val result = UnresolvedExtractValue(
             UnresolvedExtractValue(
-              UnresolvedAttribute(Seq(Constants.ANNOTATION_ATTRIBUTE)),
-              Literal(Constants.ATTRIBUTE_FIELD,StringType),
+              UnresolvedAttribute(attrToAnnotAttr(attr.toString())),
+              Literal(Constants.ATTRIBUTE_FIELD),
             ),
-            Literal(attr:String,StringType)
+            Literal(attr.toString())
           )
-          => {
-            UnresolvedExtractValue(
-              UnresolvedExtractValue(
-                UnresolvedAttribute(attrToAnnotAttr(attr)),
-                Literal(Constants.ATTRIBUTE_FIELD),
-              ),
-              Literal(attr,StringType)
-            )
-          }
+          // println(s"the result $result")
+          result
+        }
       case x:Expression => {
-        x.withNewChildren(
+        val result = x.withNewChildren(
           x.children.map ( c =>
-          replaceAnnotationAttributeReferences(c, attrToAnnotAttr)
+            replaceAnnotationAttributeReferences(c, attrToAnnotAttr)
           )
         )
+        // println(s"the result is $result")
+        result
       }
     }
   }
