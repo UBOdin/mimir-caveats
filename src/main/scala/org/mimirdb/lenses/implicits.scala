@@ -6,11 +6,17 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 
 class ColumnImplicits(col:Column)
 {
-  def caveatCast(t: String): Column   = 
-    caveatCast(CatalystSqlParser.parseDataType(t))
+  def castWithCaveat(t: String): Column   = 
+    castWithCaveat(CatalystSqlParser.parseDataType(t))
 
-  def caveatCast(t: DataType): Column =
-    new Column(CaveatedCast(col.expr, t))
+  def castWithCaveat(t: DataType): Column =
+    castWithCaveat(t, null:String)
+
+  def castWithCaveat(t: String, context: String): Column   = 
+    castWithCaveat(CatalystSqlParser.parseDataType(t), context)
+
+  def castWithCaveat(t: DataType, context: String): Column =
+    new Column(CaveatedCast(col.expr, t, context = context))
 
   def mergeWith(other:Column) =
     new Column(CaveatedMergeWith(col.expr, other.expr))

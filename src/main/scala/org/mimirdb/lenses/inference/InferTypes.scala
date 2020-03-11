@@ -82,6 +82,8 @@ object InferTypes
         .seq
         .toMap
 
+    logger.debug(s"Detected: $detectedTypes")
+
     df.schema match { 
       case StructType(fields) =>
         fields.map { field => 
