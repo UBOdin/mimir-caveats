@@ -18,8 +18,8 @@ class ColumnImplicits(col:Column)
   def castWithCaveat(t: DataType, context: String): Column =
     new Column(CaveatedCast(col.expr, t, context = context))
 
-  def mergeWith(other:Column) =
-    new Column(CaveatedMergeWith(col.expr, other.expr))
+  def shouldBeTheSameAs(other:Column) =
+    new Column(CaveatedMerge(col.expr, other.expr))
 }
 
 object implicits

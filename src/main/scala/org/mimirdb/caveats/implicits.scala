@@ -10,6 +10,8 @@ import org.mimirdb.caveats.annotate.{
   CaveatRangePlan
 }
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
+import org.mimirdb.caveats.annotate.CaveatRangeStrategy
+import org.mimirdb.caveats.annotate.AnnotationInstrumentationStrategy
 
 class ColumnImplicits(col: Column)
 {
@@ -40,7 +42,12 @@ class ColumnImplicits(col: Column)
 class DataFrameImplicits(df:DataFrame)
 {
   def trackCaveats = Caveats.annotate(df)
-  def rangeCaveats = Caveats.annotate(df, CaveatRangePlan)
+  def rangeCaveats = Caveats.annotate(df, CaveatRangeStrategy())
+  def uncertainToAnnotation(
+    model: UncertaintyModel,
+    annotationType: AnnotationInstrumentationStrategy
+  ) = Caveats.translateUncertainToAnnotation(df, model, annotationType)
+
   def listCaveatSets(
     row: Boolean = true,
     attributes: Set[String] = df.queryExecution

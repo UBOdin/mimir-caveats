@@ -35,7 +35,7 @@ class ExpressionSpec
   def annotate[T](e: Column)(op: Expression => T): T =
   {
     val wrapper =
-      df.select(e)
+      dfr.select(e)
         .trackCaveats
         .queryExecution
         .analyzed

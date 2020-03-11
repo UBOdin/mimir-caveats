@@ -24,7 +24,7 @@ import org.mimirdb.caveats.Constants._
   *  of the input plan we record an upper and a lower bound on the value of this attribute
   *  across all possible worlds.
   */
-object CaveatRangePlan
+class CaveatRangePlan()
   extends AnnotationInstrumentationStrategy
   with LazyLogging
 {
@@ -87,7 +87,7 @@ object CaveatRangePlan
               projectList.map { e =>
                 {
                   val eB = CaveatRangeExpression(e)
-                  e.name -> (eB._1, eB._3)
+                  e.name -> eB
                 }
               }
           )
@@ -117,11 +117,12 @@ object CaveatRangePlan
         // then multiply with tuple annotation
         // only keep tuples for which condition evaluates to (_,_,True)
         val newFilter = Filter(
-          conditionB._3,
+          conditionB.ub,
           rewrittenChild
         )
 
-        val projectionExprs = newFilter.output :+ buildAnnotation(
+        val projectionExprs = newFilter.output.filter(_.name != ANNOTATION_ATTRIBUTE) :+
+          buildAnnotation(
             plan = newFilter,
             rowAnnotation =
               CaveatRangeExpression.booleanToRowAnnotation(conditionB)
@@ -284,10 +285,10 @@ object CaveatRangePlan
         Project(
           leaf.output :+ buildAnnotation(
             plan = leaf,
-            rowAnnotation =
-              (Literal(1), Literal(1), Literal(1)),
+            rowAnnotation = CaveatRangeExpression.neutralRowAnnotation(),
             colAnnotations =
-              leaf.output.map { attr => { (attr.name,  (UnresolvedAttribute(attr.name), UnresolvedAttribute(attr.name))) }}
+              leaf.output.map { attr => { (attr.name,
+                RangeBoundedExpr.makeCertain(UnresolvedAttribute(attr.name))) }}
           ),
           leaf
         )
@@ -345,102 +346,96 @@ object CaveatRangePlan
   ): LogicalPlan =
     plan match { case Join(left,right,joinType,condition,hint) =>
       {
-          // rename the annotation attribute from the left and right input
-          val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
-          val RIGHT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE+"_RIGHT"
-          val rewrLeft = Project(
-            left.output :+ Alias(
-              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
-              LEFT_ANNOT_ATTR)(),
-            apply(left)
+        // rename the annotation attribute from the left and right input
+        val LEFT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE + "_LEFT"
+        val RIGHT_ANNOT_ATTR = ANNOTATION_ATTRIBUTE+"_RIGHT"
+        val rewrLeft = Project(
+          left.output :+ Alias(
+            UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+            LEFT_ANNOT_ATTR)(),
+          apply(left)
+        )
+        val rewrRight = Project(
+          right.output :+ Alias(
+            UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
+            RIGHT_ANNOT_ATTR)(),
+          apply(right)
+        )
+
+        // store which attribute corresponds to which annotation attribute
+        val attrMap = (left.output.map( x => x.name -> LEFT_ANNOT_ATTR) ++
+          right.output.map( x => x.name -> RIGHT_ANNOT_ATTR)).toMap
+
+        // rewrite condition
+        val conditionB = condition.map(CaveatRangeExpression.apply)
+
+        // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
+        val conditionBadapted = conditionB.map( x => RangeBoundedExpr(
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.lb, attrMap),
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.bg, attrMap),
+          CaveatRangeExpression.replaceAnnotationAttributeReferences(x.ub, attrMap)
+        ))
+
+        // if join condition is possibly true for a tuple pair, then we have to return the tuple pair
+        val rewrittenCondition = conditionBadapted.map(x => x.ub)
+
+        // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
+        val annotConditionToRow: RangeBoundedExpr = conditionBadapted
+          .map(CaveatRangeExpression.booleanToRowAnnotation)
+          .getOrElse(CaveatRangeExpression.neutralRowAnnotation())
+
+        // non-annotation attributes
+        val attributes =
+          left.output.map  { (LEFT_ANNOT_ATTR, _)  } ++
+          right.output.map { (RIGHT_ANNOT_ATTR, _) }
+
+        // join rewritten inputs after renaming the join attribute
+        val rewrittenJoin = Join(rewrLeft,
+          rewrRight,
+          joinType,
+          rewrittenCondition,
+          JoinHint.NONE
+        )
+
+        // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
+        val rowAnnotations = RangeBoundedExpr.fromSeq(annotConditionToRow
+          .zip(Seq(
+            CaveatRangeEncoding.rowLBexpression(_),
+            CaveatRangeEncoding.rowBGexpression(_),
+            CaveatRangeEncoding.rowUBexpression(_))
           )
-          val rewrRight = Project(
-            left.output :+ Alias(
-              UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
-              RIGHT_ANNOT_ATTR)(),
-            apply(right)
-          )
-
-          // store which attribute corresponds to which annotation attribute
-          val attrMap = (left.output.map( x => x.name -> LEFT_ANNOT_ATTR) ++
-                        right.output.map( x => x.name -> RIGHT_ANNOT_ATTR)).toMap
-
-          // rewrite condition
-          val conditionB = condition.map(CaveatRangeExpression.apply)
-
-          // if join condition is possibly true for a tuple pair, then we have to return the tuple pair
-          val rewrittenCondition = conditionB.map(x => x._3)
-
-          // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
-          val conditionBadapted = conditionB.map(x => x match {
-            case (lb,bg,ub) =>
-              (
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(lb, attrMap),
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(bg, attrMap),
-                CaveatRangeExpression.replaceAnnotationAttributeReferences(ub, attrMap)
-              )
-          }
-          )
-
-          // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
-          val annotConditionToRow :(Expression,Expression,Expression) = conditionBadapted.map(x =>
-            CaveatRangeExpression.applyPointwiseToTuple3(
-              CaveatRangeExpression.boolToInt,
-              x)
-          ).getOrElse(CaveatRangeExpression.neutralRowAnnotation)
-
-          // non-annotation attributes
-          val attributes =
-            left.output.map  { (LEFT_ANNOT_ATTR, _)  } ++
-            right.output.map { (RIGHT_ANNOT_ATTR, _) }
-
-          // join rewritten inputs after renaming the join attribute
-          val rewrittenJoin = Join(rewrLeft,
-            rewrRight,
-            joinType,
-            rewrittenCondition,
-            JoinHint.NONE
-          )
-
-          // multiply row annotations and multply the result with the join condition result mapped as 0 or 1
-          val rowAnnotations = (
+          .map { case (x,f) =>
             Multiply(
               Multiply(
-                CaveatRangeEncoding.rowLBexpression(LEFT_ANNOT_ATTR),
-                CaveatRangeEncoding.rowLBexpression(RIGHT_ANNOT_ATTR)
+                f(LEFT_ANNOT_ATTR),
+                f(RIGHT_ANNOT_ATTR)
               ),
-              annotConditionToRow._1
-            ),
-            Multiply(
-              Multiply(
-                CaveatRangeEncoding.rowBGexpression(LEFT_ANNOT_ATTR),
-                CaveatRangeEncoding.rowUBexpression(RIGHT_ANNOT_ATTR)
-              ),
-              annotConditionToRow._2
-            ),
-            Multiply(
-              Multiply(
-                CaveatRangeEncoding.rowUBexpression(LEFT_ANNOT_ATTR),
-                CaveatRangeEncoding.rowUBexpression(RIGHT_ANNOT_ATTR)
-              ),
-              annotConditionToRow._3
+              x
             )
-          )
+          }
+        )
 
-          val annotations = buildAnnotation(
-            plan = rewrittenJoin,
-            rowAnnotation = rowAnnotations,
-            colAnnotations = null //TODO
+        val colAnnotations = attrMap.toSeq.map { case (x,y) =>
+          x ->
+          RangeBoundedExpr.fromBounds(
+            CaveatRangeEncoding.attrLBexpression(x,y),
+            CaveatRangeEncoding.attrUBexpression(x,y)
           )
+        }
 
-          // calculate multiplicities
-          Project(
-            rewrittenJoin.output :+ annotations,
-            rewrittenJoin
-          )
+        val annotations = buildAnnotation(
+          plan = rewrittenJoin,
+          rowAnnotation = rowAnnotations,
+          colAnnotations = colAnnotations
+        )
+
+        // calculate multiplicities
+        Project(
+          rewrittenJoin.output.filterNot(x => x.name == LEFT_ANNOT_ATTR || x.name == RIGHT_ANNOT_ATTR) :+ annotations,
+          rewrittenJoin
+        )
       }
     }
-
 
   /** Group input based on best-guess values and merge row annotations.
     *
@@ -479,10 +474,10 @@ object CaveatRangePlan
         groupBy ++ attrAnnotAggs ++ rowAnnotAggs,
         plan
       ),
-      boundFlatAttrs.map( x => UnresolvedAttribute(x) ) match { case Seq(lb,bg,ub) => (lb,bg,ub) },
+      boundFlatAttrs.map( x => UnresolvedAttribute(x) ) match { case Seq(lb,bg,ub) => RangeBoundedExpr(lb,bg,ub) },
       inputAttrs.map( x =>
         (x,
-        { Seq("__LB", "__UB").map( y => UnresolvedAttribute(x + y) ) } match { case Seq(a,b) => (a,b) }
+        { Seq("__LB", "__UB").map( y => UnresolvedAttribute(x + y) ) } match { case Seq(a,b) => RangeBoundedExpr.fromBounds(a,b) }
         )
       )
     )
@@ -511,15 +506,49 @@ object CaveatRangePlan
 
   def constructAnnotUsingProject(
     plan: LogicalPlan,
-    rowAnnotation: (Expression,Expression,Expression),
-    colAnnotations: Seq[(String,(Expression,Expression))],
+    rowAnnotation: RangeBoundedExpr = null,
+    colAnnotations: Seq[(String,RangeBoundedExpr)] = null,
+    projExprs: Seq[NamedExpression] = null,
     annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE)
       : LogicalPlan =
   {
+    val pExprs = if (projExprs == null) { plan.output.filterNot( _.name == annotationAttr) } else projExprs
     Project(
-      plan.output :+ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
+      pExprs :+ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
       plan
     )
+  }
+
+  override def translateFromUncertaintyModel(plan: LogicalPlan, model: UncertaintyModel) =
+    model match {
+      case TupleIndependentProbabilisticDatabase(probAttr) => {
+        tipToRange(plan, probAttr)
+      }
+      case XDB(idAttr, probAttr) => {
+        xdbToRange(plan, idAttr, probAttr)
+      }
+    }
+
+  def tipToRange(plan: LogicalPlan, probAttr: String): LogicalPlan = {
+    assert(plan.output.exists(_.name == probAttr))
+    val normalAttrs = plan.output.filterNot(_.name == probAttr)
+    val normalAttrNames = normalAttrs.map(_.name)
+    constructAnnotUsingProject(plan,
+      rowAnnotation = RangeBoundedExpr(
+        // certain only with 1.0 probability
+        CaseWhen(Seq((EqualTo(UnresolvedAttribute(probAttr), Literal(1.0)), Literal(1))), Literal(0)),
+        // best guess when probability >= 0.5
+        CaseWhen(Seq((GreaterThan(UnresolvedAttribute(probAttr), Literal(0.5)), Literal(1))), Literal(0)),
+        Literal(1)
+      ),
+      colAnnotations = normalAttrNames
+        .map { a => a -> RangeBoundedExpr.makeCertain(UnresolvedAttribute(a)) },
+      projExprs = normalAttrs
+    )
+  }
+
+  def xdbToRange(plan: LogicalPlan, idAttr: String, probAttr: String): LogicalPlan = {
+    ???
   }
 
   /** Build up a value of the nested annotation attribute from its components.
@@ -531,8 +560,8 @@ object CaveatRangePlan
    */
   def buildAnnotation(
     plan: LogicalPlan,
-    rowAnnotation: (Expression, Expression, Expression) = null,
-    colAnnotations: Seq[(String, (Expression,Expression))] = null,
+    rowAnnotation: RangeBoundedExpr = null,
+    colAnnotations: Seq[(String, RangeBoundedExpr)] = null,
     annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE
   ): NamedExpression =
   {
@@ -546,12 +575,12 @@ object CaveatRangePlan
     )
 
     val realRowAnnotation: Expression =
-      Option(rowAnnotation).map { case (lb,bg,ub) =>
+      Option(rowAnnotation).map { x =>
         {
         CreateNamedStruct(Seq(
-          Literal(LOWER_BOUND_FIELD), lb,
-          Literal(BEST_GUESS_FIELD), bg,
-          Literal(UPPER_BOUND_FIELD), ub
+          Literal(LOWER_BOUND_FIELD), x.lb,
+          Literal(BEST_GUESS_FIELD), x.bg,
+          Literal(UPPER_BOUND_FIELD), x.ub
         ))
       }}
         .getOrElse { CaveatRangeEncoding.rowAnnotationExpression(annotationAttr) }
@@ -562,11 +591,11 @@ object CaveatRangePlan
 
           // CreateNamedStruct takes parameters in groups of 2: name -> value
           CreateNamedStruct(
-            cols.flatMap { case (a, (lb,ub)) =>
+            cols.flatMap { case (a, x) =>
               Seq(Literal(a),
                 CreateNamedStruct(Seq(
-                  Literal(LOWER_BOUND_FIELD), lb,
-                  Literal(UPPER_BOUND_FIELD), ub
+                  Literal(LOWER_BOUND_FIELD), x.lb,
+                  Literal(UPPER_BOUND_FIELD), x.ub
                 ))
               )
             }

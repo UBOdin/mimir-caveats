@@ -85,7 +85,7 @@ class InferTypesSpec
 
     "Detect CPUTypes" >> {
       val detected =
-        InferTypes(cpuspeed, cutoff = 0.3).toMap
+        InferTypes(cpuspeed, cutoff = 0.3).map { x => x.name -> x.dataType }.toMap
 
       detected must havePairs(
         "Processor number" -> StringType,

@@ -54,17 +54,16 @@ object Caveats
     val plan = execState.analyzed
     val annotated = annotator(plan)
     val baseSchema = plan.schema
+    val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else baseSchema.add(
+          annotationAttribute,
+          annotator.annotationEncoding.annotationStruct(plan.schema.fieldNames),
+          false
+    )
 
     return new DataFrame(
       execState.sparkSession,
       annotated,
-      RowEncoder(
-        plan.schema.add(
-          annotationAttribute,
-          annotator.annotationEncoding.annotationStruct(plan.schema.fieldNames),
-          false
-        )
-      )
+      RowEncoder(annotSchema)
       ///RowEncoder()
       // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
       //       (and final, so we can't make it accessible with reflection)
@@ -73,5 +72,31 @@ object Caveats
 
   def planIsAnnotated(plan: LogicalPlan, annotation: String = ANNOTATION_ATTRIBUTE): Boolean =
     plan.output.map { _.name }.exists { _.equals(annotation) }
+
+  def translateUncertainToAnnotation(
+    df: DataFrame,
+    model: UncertaintyModel,
+    annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+  ): DataFrame = {
+    val plan = df.queryExecution.analyzed
+    val annotated = annotator.translateFromUncertaintyModel(plan, model)
+    val normalAttrs = model.adaptedSchema(plan.schema)
+    val rowEncoder = RowEncoder(
+        normalAttrs.add(
+          annotationAttribute,
+          annotator.annotationEncoding.annotationStruct(normalAttrs.fieldNames),
+          false
+        )
+    )
+
+    println(normalAttrs)
+    println(rowEncoder)
+    return new DataFrame(
+      df.queryExecution.sparkSession,
+      annotated,
+      rowEncoder
+    )
+  }
 
 }
