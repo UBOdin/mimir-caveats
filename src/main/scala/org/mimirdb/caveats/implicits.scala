@@ -3,6 +3,7 @@ package org.mimirdb.caveats
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.functions._
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate.{
   AnnotationException,
@@ -28,12 +29,13 @@ class ColumnImplicits(col: Column)
       value = col.expr,
       message = message.expr
     ))
-
   def caveat(message: String): Column =
-    new Column(ApplyCaveat(
-      value = col.expr,
-      message = Literal(message)
-    ))
+    caveat(lit(message))
+
+  def caveatIf(message: Column, condition: Column): Column =
+    when(condition, caveat(message)).otherwise(col)
+  def caveatIf(message: String, condition: Column): Column =
+    caveatIf(lit(message), condition)
 
   def hasCaveat: Column =
     new Column(CaveatExistsInExpression(col.expr))
@@ -85,6 +87,18 @@ class DataFrameImplicits(df:DataFrame)
     assertAnnotated
     df(Constants.ANNOTATION_ATTRIBUTE)
   }
+
+
+  val implicitTruth = new ColumnImplicits(lit(true))
+
+  def caveat(message: Column): DataFrame =  
+    df.filter( implicitTruth.caveat(message) )
+  def caveat(message: String): DataFrame =  
+    df.filter( implicitTruth.caveat(message) )
+  def caveatIf(message: Column, condition: Column): DataFrame =
+    df.filter( implicitTruth.caveatIf(message, condition) )
+  def caveatIf(message: String, condition: Column): DataFrame =
+    df.filter( implicitTruth.caveatIf(message, condition) )
 }
 
 object implicits
