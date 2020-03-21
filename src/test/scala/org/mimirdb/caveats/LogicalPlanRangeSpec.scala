@@ -149,7 +149,23 @@ class LogicalPlanRangeSpec
 
     }
 
-    "TIP input" >> {
+    // "support aggregates without caveats" >> {
+    //   annotate(
+    //     dfr.select( sum($"A").as("X") )
+    //   ) { result =>
+    //     result.map { _._1 } must be equalTo(ones)
+    //   }
+
+    //   annotate(
+    //     dfr.select( $"A", $"B".cast("int").as("B") )
+    //       .groupBy($"A").sum("B")
+    //     // ,trace = true
+    //   ) { result =>
+    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
+    //   }
+    // }
+
+    "TIP inputs" >> {
       annotate(
         dftip.uncertainToAnnotation(
           TupleIndependentProbabilisticDatabase("P"),
@@ -192,7 +208,7 @@ class LogicalPlanRangeSpec
               .select( $"B"),
             $"A" === $"B"
           )
-         , trace = true
+         // , trace = true
       ) { result =>
         result.map { _._1 } must be equalTo(
           Seq(
@@ -206,21 +222,6 @@ class LogicalPlanRangeSpec
       }
 
     }
-
-    // "support aggregates without caveats" >> {
-    //   annotate(
-    //     dfr.select( sum($"A") )
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false))
-    //   }
-    //   annotate(
-    //     dfr.select( $"A", $"B".cast("int").as("B") )
-    //       .groupBy($"A").sum("B")
-    //     // ,trace = true
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //   }
-    // }
 
     // "support order by/limit without caveats" >> {
     //   annotate(
