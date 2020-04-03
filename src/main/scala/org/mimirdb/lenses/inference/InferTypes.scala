@@ -104,7 +104,7 @@ object InferTypes
   ): Seq[(DataType, Double)] =
   {
     val typeLookupQuery =
-      df.select(
+      df.na.drop().select(
         count(lit(true)).as("col_rows") +:
         (TYPES.map { case (t,_,test)  => 
           sum(
