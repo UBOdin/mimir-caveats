@@ -8,9 +8,8 @@
   </appender>
   
   <!--+++++++++++++++++++++++  Caveats  +++++++++++++++++++++++++-->
-  <logger name="org.mimirdb.caveats" level="ERROR">
-    <appender-ref ref="STDOUT" />
-  </logger>
+  <logger name="org.mimirdb.caveats" level="ERROR" />
+  <logger name="org.mimirdb.lenses.inference.InferTypes$" level="ERROR" />
   
   <root level="ERROR">
     <appender-ref ref="STDOUT" />

@@ -113,6 +113,30 @@ class ExpressionSpec
       }
     }
 
+    "handle conditional caveats" >> {
+
+      annotate(
+        $"A".caveatIf("A possible problem", $"A" === "1")
+      ){
+        e => 
+        // No caveats = no caveats
+        test(e)("0" -> false, "1" -> false, "2" -> false) must beFalse
+        
+        // Caveats on non-accessed values shouldn't change anything
+        test(e)("0" -> false, "1" -> true,  "2" -> false) must beFalse
+        
+        // Caveats on the base value should propagate
+        test(e)("0" -> true,  "1" -> false, "2" -> false) must beTrue
+
+        // ... regardless of whether or not the condition is satisfied
+        test(e)("1" -> true,  "1" -> false, "2" -> false) must beTrue
+
+        // And the condition should apply caveats
+        test(e)("1" -> false, "1" -> false, "2" -> false) must beTrue
+      }
+
+    }
+
     "handle conjunctions and disjunctions" >> {
 
       annotate(

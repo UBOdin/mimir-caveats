@@ -3,7 +3,7 @@ package org.mimirdb.caveats
 import org.apache.spark.sql.functions.array
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{ CodegenContext, ExprCode }
-import org.apache.spark.sql.catalyst.plans.logical.{ LogicalPlan, Project }
+import org.apache.spark.sql.catalyst.plans.logical.{ LogicalPlan, Project, Filter }
 import org.apache.spark.sql.catalyst.InternalRow
 
 import org.mimirdb.caveats.Constants._
@@ -13,7 +13,8 @@ case class ApplyCaveat(
   message: Expression,
   family: Option[String] = None,
   key: Seq[Expression] = Seq(),
-  global: Boolean = false
+  global: Boolean = false,
+  condition: Expression = Literal(true)
 ) extends Expression
   with UserDefinedExpression
 {
@@ -40,7 +41,10 @@ case class ApplyCaveat(
             Alias(message, MESSAGE_ATTRIBUTE)(),
             Alias(CreateArray(key), KEY_ATTRIBUTE)()
           ), 
-          plan
+          Filter(
+            condition,
+            plan
+          )
         ),
         family
       )

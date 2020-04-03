@@ -66,10 +66,13 @@ class CaveatExistsInExpression(
       // For several expression types, we can do better than the naive default.
       /////////////////////////////////////////////////////////////////////////
 
-      // The caveat expression (obviously) is always caveated.  If we're not
-      // running in pedantic mode however, exclude global caveats.
+      // The caveat expression (obviously) is always caveated (assuming the 
+      // caveat condition holds).  If we're not running in pedantic mode 
+      // however, exclude global caveats.
       case caveat: ApplyCaveat =>
-        if(pedantic || !caveat.global) { Literal(true) }
+        if(pedantic || !caveat.global) { 
+          foldOr(caveat.condition, apply(caveat.value))
+        }
         else { apply(caveat.value) }
 
       // Attributes are caveatted if they are caveated in the input.

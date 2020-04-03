@@ -17,23 +17,26 @@ import org.mimirdb.caveats.annotate.AnnotationInstrumentationStrategy
 class ColumnImplicits(col: Column)
 {
   def caveat(message: Column, family: String)(key: Column*): Column =
+    caveatIf(message, family, lit(true))(key:_*)
+  def caveat(message: Column): Column =
+    caveatIf(message, lit(true))
+  def caveat(message: String): Column =
+    caveatIf(message, lit(true))
+
+  def caveatIf(message: Column, family: String, condition: Column)(key: Column*): Column =
     new Column(ApplyCaveat(
       value = col.expr,
       message = message.cast(StringType).expr,
       family = Some(family),
-      key = key.map { _.expr }
+      key = key.map { _.expr },
+      condition = condition.expr
     ))
-
-  def caveat(message: Column): Column =
+  def caveatIf(message: Column, condition: Column): Column =
     new Column(ApplyCaveat(
       value = col.expr,
-      message = message.expr
+      message = message.expr,
+      condition = condition.expr
     ))
-  def caveat(message: String): Column =
-    caveat(lit(message))
-
-  def caveatIf(message: Column, condition: Column): Column =
-    when(condition, caveat(message)).otherwise(col)
   def caveatIf(message: String, condition: Column): Column =
     caveatIf(lit(message), condition)
 

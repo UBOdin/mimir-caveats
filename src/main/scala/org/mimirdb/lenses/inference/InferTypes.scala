@@ -104,15 +104,17 @@ object InferTypes
   ): Seq[(DataType, Double)] =
   {
     val typeLookupQuery =
-      df.na.drop().select(
-        count(lit(true)).as("col_rows") +:
-        (TYPES.map { case (t,_,test)  => 
-          sum(
-            when(test(df("`"+attribute.replaceAll("`", "``")+"`")), 1)
-              .otherwise(0)
-          ).as("col_as_"+t.typeName)
-        } ):_*
-      )
+      df.select(df(attribute))
+        .na.drop()
+        .select(
+          count(lit(true)).as("col_rows") +:
+          (TYPES.map { case (t,_,test)  => 
+            sum(
+              when(test(df("`"+attribute.replaceAll("`", "``")+"`")), 1)
+                .otherwise(0)
+            ).as("col_as_"+t.typeName)
+          } ):_*
+        )
     def typeLookups = typeLookupQuery.collect()(0)
 
     val maxCount = typeLookups.getLong(0)

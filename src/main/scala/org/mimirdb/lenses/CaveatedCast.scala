@@ -13,17 +13,15 @@ object CaveatedCast
     family: Option[String] = None,
     key: Seq[Expression] = Seq()
   ): Expression =
-    If( IsNull(Cast(expr, t)), 
-        ApplyCaveat(
-          value = Literal(null), 
-          message = Concat(Seq(
-            Literal("Could not cast '"),
-            Cast(expr, StringType),
-            Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
-          )),
-          family = family,
-          key = key
-        ),
-        Cast(expr, t)
+    ApplyCaveat(
+      value = Literal(null), 
+      message = Concat(Seq(
+        Literal("Could not cast '"),
+        Cast(expr, StringType),
+        Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
+      )),
+      family = family,
+      key = key,
+      condition = IsNull(Cast(expr, t))
     )
 }
