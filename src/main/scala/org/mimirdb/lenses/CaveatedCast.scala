@@ -14,7 +14,7 @@ object CaveatedCast
     key: Seq[Expression] = Seq()
   ): Expression =
     ApplyCaveat(
-      value = Literal(null), 
+      value = Cast(expr, t), 
       message = Concat(Seq(
         Literal("Could not cast '"),
         Cast(expr, StringType),
