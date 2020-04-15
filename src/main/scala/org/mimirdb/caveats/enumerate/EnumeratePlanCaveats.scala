@@ -114,7 +114,7 @@ object EnumeratePlanCaveats
           projectList.filter { expr => attributes contains expr.name }
         val localCaveats = 
           relevantProjections.flatMap { projectExpression => 
-            val fieldVSlice = attributes(projectExpression.name)
+            val fieldVSlice = inline(attributes(projectExpression.name), projectList)
             EnumerateExpressionCaveats(child, projectExpression, fieldVSlice)
           }
         val allChildDependencies = 
