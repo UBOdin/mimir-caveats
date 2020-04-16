@@ -50,8 +50,29 @@ class CaveatExistsInPlan(
    */
   def apply(plan: LogicalPlan): LogicalPlan =
   {
+    Project(
+     plan.output :+Alias(
+        CreateNamedStruct(Seq(
+          Literal(ROW_FIELD), CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression(),
+          Literal(ATTRIBUTE_FIELD), CreateNamedStruct(
+            plan.output.flatMap { attribute => 
+              Seq(
+                Literal(attribute.name),
+                CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attribute.name)
+              )
+            }
+          )
+        )),
+        ANNOTATION_ATTRIBUTE
+      )(),
+      annotate(plan)
+    )
+  }
+
+  def annotate(plan: LogicalPlan): LogicalPlan =
+  {
     def PASS_THROUGH_CAVEATS =
-      plan.mapChildren { apply(_) }
+      plan.mapChildren { annotate(_) }
 
     def PLAN_IS_FREE_OF_CAVEATS =
       buildPlan(
@@ -69,7 +90,11 @@ class CaveatExistsInPlan(
     val ret: LogicalPlan = plan match {
 
       /*********************************************************/
-      case _ if Caveats.planIsAnnotated(plan) => plan
+      case _ if Caveats.planIsAnnotated(plan) => 
+        buildPlan(
+          plan,
+          schema = plan.output.filter { !_.equals(ANNOTATION_ATTRIBUTE) }
+        )
 
       /*********************************************************/
       case _:ReturnAnswer =>
@@ -101,14 +126,15 @@ class CaveatExistsInPlan(
           in the input.
         */
 
-        val rewrittenChild = apply(child)
+        val rewrittenChild = annotate(child)
         val annotation =
           buildAnnotation(
             rewrittenChild,
+            plan.output,
             attributes = projectList.map { e => e.name -> annotateExpression(e) }
           )
         Project(
-          projectList = projectList :+ annotation,
+          projectList = projectList ++ annotation,
           child = rewrittenChild
         )
       }
@@ -137,7 +163,7 @@ class CaveatExistsInPlan(
         */
 
         val generatorAnnotation = annotateExpression(generator)
-        val rewrittenChild = apply(child)
+        val rewrittenChild = annotate(child)
         extendPlan(
           // If there's a caveat on the generator, the number of rows might
           // change.
@@ -172,7 +198,7 @@ class CaveatExistsInPlan(
           get propagated into the row annotation.
         */
         val conditionAnnotation = annotateExpression(condition)
-        val rewrittenChild = apply(child)
+        val rewrittenChild = annotate(child)
         extendPlan(
           plan = Filter(condition, rewrittenChild),
           schema = plan.output,
@@ -231,7 +257,7 @@ class CaveatExistsInPlan(
                 UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
                 LEFT_ANNOTATION_ATTRIBUTE
               )(),
-            apply(left)
+            annotate(left)
           )
         val rewrittenRight =
           Project(
@@ -239,12 +265,13 @@ class CaveatExistsInPlan(
                 UnresolvedAttribute(ANNOTATION_ATTRIBUTE),
                 RIGHT_ANNOTATION_ATTRIBUTE
               )(),
-            apply(right)
+            annotate(right)
           )
 
         val conditionAnnotation = condition.map { annotateExpression(_) }
         val annotation = buildAnnotation(
           plan,
+          plan.output
         )
         val attributes =
           left.output.map  { (LEFT_ANNOTATION_ATTRIBUTE, _)  } ++
@@ -256,8 +283,8 @@ class CaveatExistsInPlan(
           // caveated, or if there is a caveated join condition
           row = foldOr(
             (Seq(
-              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
-              CaveatExistsBooleanArrayEncoding.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression(LEFT_ANNOTATION_ATTRIBUTE),
+              CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression(RIGHT_ANNOTATION_ATTRIBUTE),
             ) ++ conditionAnnotation):_*
           ),
 
@@ -265,7 +292,7 @@ class CaveatExistsInPlan(
           attributes =
             attributes.map { case (annotation, attr) =>
               attr.name ->
-                CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name, annotation)
+                CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attr.name, annotation)
             },
 
           schema = plan.output,
@@ -304,7 +331,7 @@ class CaveatExistsInPlan(
           view... in which case it'll trigger the planIsAnnotated case above.
           If we've gotten here, we have to drop the link to the view.
         */
-        apply(child)
+        annotate(child)
       }
 
       /*********************************************************/
@@ -379,7 +406,7 @@ class CaveatExistsInPlan(
           pre- and post-aggregate.
          */
 
-        val annotatedChild = apply(child)
+        val annotatedChild = annotate(child)
         val groupingAttributes =
           groupingExpressions.flatMap { attributesOfExpression(_) }.toSet
 
@@ -389,7 +416,7 @@ class CaveatExistsInPlan(
         val groupIsGuaranteedToHaveRows =
           aggregateBoolOr(
             foldAnd(
-              negate(CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()),
+              negate(CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression()),
               negate(groupMembershipDependsOnACaveat)
             )
           )
@@ -413,7 +440,7 @@ class CaveatExistsInPlan(
                               if(isAggregate(aggr)){
                                 foldOr(
                                   groupMembershipDependsOnACaveat,
-                                  CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
+                                  CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression()
                                 )
                               } else { groupMembershipDependsOnACaveat }
                             )
@@ -423,6 +450,7 @@ class CaveatExistsInPlan(
         val annotation =
           buildAnnotation(
             plan = child,
+            schema = plan.output,
             row = rowAnnotation,
             attributes = attrAnnotations
           )
@@ -430,7 +458,7 @@ class CaveatExistsInPlan(
         val ret =
           Aggregate(
             groupingExpressions,
-            aggregateExpressions :+ annotation,
+            aggregateExpressions ++ annotation,
             annotatedChild
           )
 
@@ -452,13 +480,14 @@ class CaveatExistsInPlan(
               JoinHint.NONE
             )
           Project(
-            plan.output :+ buildAnnotation(
+            plan.output ++ buildAnnotation(
               plan = join,
+              schema = plan.output,
               attributes =
                 plan.output.map { attr =>
                     attr.name ->
                       foldOr(
-                        CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attr.name),
+                        CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attr.name),
                         UnresolvedAttribute(CONTAMINATED_GROUPS)
                       )
                  }
@@ -510,7 +539,7 @@ class CaveatExistsInPlan(
       {
         val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
         extendPlan(
-          GlobalLimit(limitExpr, apply(child)),
+          GlobalLimit(limitExpr, annotate(child)),
           plan.output,
           row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
         )
@@ -521,7 +550,7 @@ class CaveatExistsInPlan(
       {
         val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
         extendPlan(
-          GlobalLimit(limitExpr, apply(child)),
+          GlobalLimit(limitExpr, annotate(child)),
           plan.output,
           row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
         )
@@ -554,7 +583,7 @@ class CaveatExistsInPlan(
           is a dependent attribute.  Convert to a (trivial) aggregate and
           rewrite that.
         */
-        apply(Aggregate(child.output, child.output, child))
+        annotate(Aggregate(child.output, child.output, child))
       }
 
       /*********************************************************/
@@ -613,7 +642,7 @@ class CaveatExistsInPlan(
         attributes = attributes
       )
     Project(
-      schema :+ annotation,
+      schema ++ annotation,
       plan
     )
   }
@@ -628,11 +657,12 @@ class CaveatExistsInPlan(
     val annotation =
       buildAnnotation(
         plan = plan,
+        schema = schema,
         row = row,
         attributes = attributes
       )
     Project(
-      schema :+ annotation,
+      schema ++ annotation,
       plan
     )
   }
@@ -642,25 +672,22 @@ class CaveatExistsInPlan(
     schema: Seq[Attribute],
     row: Expression = null,
     attributes: Seq[(String, Expression)] = Seq()
-  ): NamedExpression =
+  ): Seq[NamedExpression] =
   {
-    assert(
-      ((row != null) && (!attributes.isEmpty)) || Caveats.planIsAnnotated(plan)
-    )
-
     var rowAnnotation =
-      CaveatExistsBooleanArrayEncoding.rowAnnotationExpression()
+      CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression()
     if(row != null){
       rowAnnotation = Or(rowAnnotation, row)
     }
 
     var attributeAnnotations =
       schema.map { attribute =>
-        attribute.name -> CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(attribute.name)
+        attribute.name -> CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attribute.name)
       } ++ attributes
 
     buildAnnotation(
       plan,
+      schema = schema,
       row = rowAnnotation,
       attributes = attributeAnnotations
     )
@@ -668,37 +695,36 @@ class CaveatExistsInPlan(
 
   def buildAnnotation(
     plan: LogicalPlan,
+    schema: Seq[Attribute],
     row: Expression = null,
     attributes: Seq[(String, Expression)] = null
-  ): NamedExpression =
+  ): Seq[NamedExpression] =
   {
-    // If we're being asked to propagate existing caveats, we'd better
-    // be seeing an annotation in the input schema
-    assert(
-      ((row != null) && (attributes != null)) || Caveats.planIsAnnotated(plan)
-    )
+    val realRowAnnotation: NamedExpression =
+      Alias(
+        Option(row)
+          .getOrElse { CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression() },
+        CaveatExistsBooleanAttributeEncoding.rowAnnotationName()
+      )()
 
-    val realRowAnnotation: Expression =
-      Option(row)
-        .getOrElse { CaveatExistsBooleanArrayEncoding.rowAnnotationExpression() }
-
-    val realAttributeAnnotations: Expression =
+    val realAttributeAnnotations: Seq[NamedExpression] =
       Option(attributes)
         .map { attributes =>
 
           // CreateNamedStruct takes parameters in groups of 2: name -> value
-          CreateNamedStruct(
-            attributes.flatMap { case (a, b) => Seq(Literal(a),b) }
-          )
+          attributes.map { case (a, b) => 
+            Alias(b, CaveatExistsBooleanAttributeEncoding.attributeAnnotationName(a))() 
+          }
         }
-        .getOrElse { CaveatExistsBooleanArrayEncoding.allAttributeAnnotationsExpression() }
+        .getOrElse { 
+          schema.map { attr => 
+            Alias(
+              CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attr.name),
+              CaveatExistsBooleanAttributeEncoding.attributeAnnotationName(attr.name)
+            )()
+          }
+        }
 
-    Alias(
-      CreateNamedStruct(Seq(
-        Literal(ROW_FIELD), realRowAnnotation,
-        Literal(ATTRIBUTE_FIELD), realAttributeAnnotations
-      )),
-      ANNOTATION_ATTRIBUTE
-    )()
+    realRowAnnotation +: realAttributeAnnotations
   }
 }

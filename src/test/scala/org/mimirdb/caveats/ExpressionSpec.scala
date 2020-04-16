@@ -13,6 +13,7 @@ import org.apache.spark.sql.types._
 
 import org.mimirdb.test._
 import org.mimirdb.caveats.implicits._
+import org.mimirdb.caveats.annotate.CaveatExistsBooleanAttributeEncoding
 
 class ExpressionSpec
   extends Specification
@@ -24,35 +25,37 @@ class ExpressionSpec
   def row(fields:(Any, Boolean)*) = {
     InternalRow.fromSeq(
       fields.map { _._1 }
-            .map { Literal(_).eval(InternalRow()) } :+
-      InternalRow(
-        false,
-        InternalRow(fields.map { _._2 }:_*)
-      )
+            .map { Literal(_).eval(InternalRow()) } ++
+      Seq(
+        false
+      ) ++
+      fields.map { _._2 }
     )
   }
 
   def annotate[T](e: Column)(op: Expression => T): T =
   {
     val wrapper =
-      dfr.select(e)
+      dfr.select(e.as("TEST"))
         .trackCaveats
         .queryExecution
         .analyzed
+        .children(0)
         .asInstanceOf[Project]
+    // println(s"$e -> ${wrapper.treeString}")
     val schema =
       wrapper.child.output
     val result =
       wrapper
         .projectList
-        .find { _.name.equals(Constants.ANNOTATION_ATTRIBUTE) }
+        .find { _.name.equals(CaveatExistsBooleanAttributeEncoding.attributeAnnotationName("TEST")) }
         .get
         .children(0) // Strip off the Alias
-        .asInstanceOf[CreateNamedStruct]
-        .valExprs(1) // Caveats.COLUMN_ANNOTATION
-        .asInstanceOf[CreateNamedStruct]
-        .valExprs(0) // The only column we added
-
+        // .asInstanceOf[CreateNamedStruct]
+        // .valExprs(1) // Caveats.COLUMN_ANNOTATION
+        // .asInstanceOf[CreateNamedStruct]
+        // .valExprs(0) // The only column we added
+    // println(s"RESULT: $result")
     op( bindReference(result, schema) )
   }
 
@@ -68,6 +71,7 @@ class ExpressionSpec
 
 
       annotate(lit(1)) { e =>
+        // println(e)
         e must beEquivalentTo(Literal(false))
         test(e)() must beFalse
       }

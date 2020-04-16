@@ -64,9 +64,6 @@ object Caveats
       execState.sparkSession,
       annotated,
       RowEncoder(annotSchema)
-      ///RowEncoder()
-      // ^---- UUUUGLY.  We should really be using dataset.encoder, but it's PRIVATE!!!!
-      //       (and final, so we can't make it accessible with reflection)
     )
   }
 
@@ -97,6 +94,24 @@ object Caveats
       annotated,
       rowEncoder
     )
+  }
+
+  def strip(plan: LogicalPlan): LogicalPlan =
+  {
+    plan.transformAllExpressions {
+      case ApplyCaveat(value, _, _, _, _, _) => value
+    }
+  }
+
+  def strip(df: DataFrame): DataFrame =
+  {
+    val stripped = strip(df.queryExecution.analyzed)
+    return new DataFrame(
+      df.queryExecution.sparkSession,
+      stripped,
+      RowEncoder(stripped.schema)
+    )
+
   }
 
 }

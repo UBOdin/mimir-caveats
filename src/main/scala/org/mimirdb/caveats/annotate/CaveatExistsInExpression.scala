@@ -81,10 +81,10 @@ class CaveatExistsInExpression(
       // attributes (e.g., part of the grouping expressions).  If so, the
       // corresponding annotation lookup needs to be wrapped in an aggregate.
       case a: Attribute if expectAggregate =>
-        aggregateBoolOr(CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(a.name))
+        aggregateBoolOr(CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(a.name))
 
       case a: Attribute =>
-        CaveatExistsBooleanArrayEncoding.attributeAnnotationExpression(a.name)
+        CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(a.name)
 
       // Not entirely sure how to go about handling subqueries yet
       case sq: SubqueryExpression => ???

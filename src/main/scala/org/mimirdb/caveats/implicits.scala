@@ -11,6 +11,7 @@ import org.mimirdb.caveats.annotate.{
   CaveatRangePlan
 }
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
+import org.mimirdb.caveats.annotate.CaveatExists
 import org.mimirdb.caveats.annotate.CaveatRangeStrategy
 import org.mimirdb.caveats.annotate.AnnotationInstrumentationStrategy
 
@@ -46,7 +47,7 @@ class ColumnImplicits(col: Column)
 
 class DataFrameImplicits(df:DataFrame)
 {
-  def trackCaveats = Caveats.annotate(df)
+  def trackCaveats = Caveats.annotate(df, CaveatExists())
   def rangeCaveats = Caveats.annotate(df, CaveatRangeStrategy())
   def uncertainToAnnotation(
     model: UncertaintyModel,
@@ -102,6 +103,9 @@ class DataFrameImplicits(df:DataFrame)
     df.filter( implicitTruth.caveatIf(message, condition) )
   def caveatIf(message: String, condition: Column): DataFrame =
     df.filter( implicitTruth.caveatIf(message, condition) )
+
+  def stripCaveats: DataFrame =
+    Caveats.strip(df)
 }
 
 object implicits

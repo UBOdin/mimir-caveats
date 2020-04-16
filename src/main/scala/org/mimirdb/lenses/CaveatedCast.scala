@@ -3,8 +3,10 @@ package org.mimirdb.lenses
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.types.{ DataType, StringType }
 import org.mimirdb.caveats.ApplyCaveat
+import com.typesafe.scalalogging.LazyLogging
 
 object CaveatedCast
+  extends LazyLogging
 {
   def apply(
     expr: Expression, 
@@ -12,7 +14,8 @@ object CaveatedCast
     context: String = null, 
     family: Option[String] = None,
     key: Seq[Expression] = Seq()
-  ): Expression =
+  ): Expression = {
+    logger.trace(s"CaveatedCast: $expr -> $t")
     ApplyCaveat(
       value = Cast(expr, t), 
       message = Concat(Seq(
@@ -24,4 +27,5 @@ object CaveatedCast
       key = key,
       condition = IsNull(Cast(expr, t))
     )
+  }
 }
