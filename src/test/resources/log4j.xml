@@ -10,7 +10,7 @@
   </appender>
 
   <category name="org.mimirdb.caveats">  
-      <priority value="TRACE" />  
+      <priority value="ERROR" />  
   </category>  
 
   <root>

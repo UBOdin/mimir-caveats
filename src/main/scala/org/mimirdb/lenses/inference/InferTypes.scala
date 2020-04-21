@@ -13,6 +13,8 @@ import org.mimirdb.spark.SchemaLookup
 object InferTypes
   extends LazyLogging
 {
+  
+  val TRAIN_LIMIT = 1000
 
   def simpleCastTest(t:DataType):(Column => Column) = 
     (col: Column) => not(isnull(col.cast(t)))
@@ -114,7 +116,7 @@ object InferTypes
                 .otherwise(0)
             ).as("col_as_"+t.typeName)
           } ):_*
-        )
+        ).limit(TRAIN_LIMIT)
     def typeLookups = typeLookupQuery.collect()(0)
 
     val maxCount = typeLookups.getLong(0)
