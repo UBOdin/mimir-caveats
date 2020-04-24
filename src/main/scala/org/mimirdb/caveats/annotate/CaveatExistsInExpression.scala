@@ -15,6 +15,7 @@ import org.mimirdb.spark.expressionLogic.{
   negate,
   aggregateBoolOr
 }
+import org.apache.spark.sql.catalyst.plans.logical.Aggregate
 
 /**
  * The [apply] method of this class is used to derive the annotation for an
@@ -86,8 +87,41 @@ class CaveatExistsInExpression(
       case a: Attribute =>
         CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(a.name)
 
-      // Not entirely sure how to go about handling subqueries yet
-      case sq: SubqueryExpression => ???
+      // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or 
+      // a scalar subquery).  We can get a bit more fancy eventually, but for now let's take a
+      // simple, conservative approach: The result will be caveated if the nested query returns a 
+      // caveat on a value or record, or if any of the children going into the subquery are 
+      // caveated.
+      case sq: SubqueryExpression =>
+      {
+        val compilePlan = new CaveatExistsInPlan(pedantic)
+        val subqueryWithCaveats = compilePlan(sq.plan)
+        val correlatedCaveats = sq.children.map { apply(_) }
+
+        foldOr((
+          correlatedCaveats :+
+          ScalarSubquery(
+            Aggregate(
+              Seq(),
+              Seq(Alias(
+                aggregateBoolOr(
+                  foldOr(
+                    compilePlan.annotationEncoding.rowAnnotationExpression(),
+                    foldOr(
+                      sq.plan.output
+                        .map { attr => compilePlan.annotationEncoding
+                                                  .attributeAnnotationExpression(attr.name) 
+                              }:_*
+                    )
+                  )
+                ), "__MIMIR_NESTED_QUERY_IS_CAVEATED")()
+              ),
+              subqueryWithCaveats
+            ),
+            sq.children
+          )
+        ):_*)
+      }
 
       // If the predicate is guaranteed safe, we can limit ourselves to the
       // caveattedness of either the then or else clause.
