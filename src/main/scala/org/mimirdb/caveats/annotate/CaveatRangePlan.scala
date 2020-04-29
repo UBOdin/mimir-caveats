@@ -29,7 +29,7 @@ class CaveatRangePlan()
   with LazyLogging
 {
 
-  def annotationEncoding = CaveatRangeEncoding
+  def outputEncoding = CaveatRangeEncoding
 
   def annotationType = CaveatRangeType
 
