@@ -13,7 +13,7 @@ import org.apache.spark.sql.types._
 
 import org.mimirdb.test._
 import org.mimirdb.caveats.implicits._
-import org.mimirdb.caveats.annotate.CaveatExistsBooleanAttributeEncoding
+import org.mimirdb.caveats.annotate.CaveatExistsAttributeAnnotation
 
 class ExpressionSpec
   extends Specification
@@ -26,10 +26,8 @@ class ExpressionSpec
     InternalRow.fromSeq(
       fields.map { _._1 }
             .map { Literal(_).eval(InternalRow()) } ++
-      Seq(
-        false
-      ) ++
-      fields.map { _._2 }
+      fields.map { _._2 } ++ 
+      Seq(false)
     )
   }
 
@@ -41,14 +39,20 @@ class ExpressionSpec
         .queryExecution
         .analyzed
         .children(0)
+        // .children(0)
         .asInstanceOf[Project]
     // println(s"$e -> ${wrapper.treeString}")
     val schema =
       wrapper.child.output
+    // println(s"SCHEMA: $schema")
+    val testColumn = 
+      wrapper.output.find { _.name.equals("TEST") }.get
+    val testAnnotationColumn =
+      CaveatExistsAttributeAnnotation.annotationFor(testColumn)
     val result =
       wrapper
         .projectList
-        .find { _.name.equals(CaveatExistsBooleanAttributeEncoding.attributeAnnotationName("TEST")) }
+        .find { _.toAttribute.exprId.equals(testAnnotationColumn.exprId) }
         .get
         .children(0) // Strip off the Alias
         // .asInstanceOf[CreateNamedStruct]
@@ -77,6 +81,7 @@ class ExpressionSpec
       }
 
       annotate($"A"){ e =>
+        println(e)
         test(e)("1" -> false, "2" -> false, "3" -> false) must beFalse
         test(e)("1" -> false, "2" -> true,  "3" -> false) must beFalse
         test(e)("1" -> true,  "2" -> false, "3" -> false) must beTrue

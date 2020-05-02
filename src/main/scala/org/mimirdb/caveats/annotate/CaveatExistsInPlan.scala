@@ -7,6 +7,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.{ JoinType, Cross }
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
+import org.apache.spark.sql.types.BooleanType
 
 import com.typesafe.scalalogging.LazyLogging
 
@@ -417,19 +418,31 @@ class CaveatExistsInPlan(
         // hypothetically placed into ANY group, contaminating all attribute
         // annotations.
         if(pedantic && !groupMembershipDependsOnACaveat.equals(Literal(false))){
-          internalEncoding.join(
-            plan,
-            ret,
-            Aggregate(Seq(),
-              internalEncoding.annotations(
-                oldPlan = Aggregate(Seq(), Seq(), child),
-                newChild = annotatedChild, 
-                replace = Seq(),
-                row = aggregateBoolOr(groupMembershipDependsOnACaveat)
+
+          val groupContaminant = AttributeReference("__MIMIR_ALL_GROUPS_CONTAMINATED", BooleanType)()
+
+          internalEncoding.annotate(
+            oldPlan = plan,
+            newPlan = 
+              Join(
+                ret,
+                Aggregate(Seq(), Seq(
+                    Alias(
+                      aggregateBoolOr(groupMembershipDependsOnACaveat), 
+                      groupContaminant.name
+                    )(groupContaminant.exprId)
+                  ),
+                  annotatedChild
+                ),
+                Cross,
+                None,
+                JoinHint.NONE
               ),
-              annotatedChild
-            ),
-            Join(_, _, Cross, None, JoinHint.NONE)
+            replace = 
+              aggregateExpressions
+                  .map { _.toAttribute }
+                  .map { attr => attr -> foldOr(internalEncoding.annotationFor(attr), 
+                                                groupContaminant) }
           )
         } else { ret }
       }
@@ -479,7 +492,7 @@ class CaveatExistsInPlan(
         internalEncoding.annotate(
           oldPlan = plan,
           newPlan = GlobalLimit(limitExpr, annotate(child)),
-          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+          addToRow = possibleSortCaveats.map { _.isNonemptyExpression }
         )
       }
 
@@ -490,7 +503,7 @@ class CaveatExistsInPlan(
         internalEncoding.annotate(
           oldPlan = plan,
           newPlan = LocalLimit(limitExpr, annotate(child)),
-          row = foldOr(possibleSortCaveats.map { _.isNonemptyExpression }:_*)
+          addToRow = possibleSortCaveats.map { _.isNonemptyExpression }
         )
       }
 
@@ -565,104 +578,4 @@ class CaveatExistsInPlan(
     return ret
   }
 
-  // def extendPlan(
-  //   plan: LogicalPlan,
-  //   schema: Seq[Attribute],
-  //   row: Expression = null,
-  //   attributes: Seq[(String, Expression)] = Seq()
-  // ): LogicalPlan =
-  // {
-  //   val annotation =
-  //     extendAnnotation(
-  //       plan = plan,
-  //       schema = schema,
-  //       row = row,
-  //       attributes = attributes
-  //     )
-  //   Project(
-  //     schema ++ annotation,
-  //     plan
-  //   )
-  // }
-
-  // def buildPlan(
-  //   plan: LogicalPlan,
-  //   schema: Seq[Attribute],
-  //   row: Expression = null,
-  //   attributes: Seq[(String, Expression)] = null
-  // ): LogicalPlan =
-  // {
-  //   val annotation =
-  //     buildAnnotation(
-  //       plan = plan,
-  //       schema = schema,
-  //       row = row,
-  //       attributes = attributes
-  //     )
-  //   Project(
-  //     schema ++ annotation,
-  //     plan
-  //   )
-  // }
-
-  // def extendAnnotation(
-  //   plan: LogicalPlan,
-  //   schema: Seq[Attribute],
-  //   row: Expression = null,
-  //   attributes: Seq[(String, Expression)] = Seq()
-  // ): Seq[NamedExpression] =
-  // {
-  //   var rowAnnotation =
-  //     CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression()
-  //   if(row != null){
-  //     rowAnnotation = Or(rowAnnotation, row)
-  //   }
-
-  //   var attributeAnnotations =
-  //     schema.map { attribute =>
-  //       attribute.name -> CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attribute.name)
-  //     } ++ attributes
-
-  //   buildAnnotation(
-  //     plan,
-  //     schema = schema,
-  //     row = rowAnnotation,
-  //     attributes = attributeAnnotations
-  //   )
-  // }
-
-  // def buildAnnotation(
-  //   plan: LogicalPlan,
-  //   schema: Seq[Attribute],
-  //   row: Expression = null,
-  //   attributes: Seq[(String, Expression)] = null
-  // ): Seq[NamedExpression] =
-  // {
-  //   val realRowAnnotation: NamedExpression =
-  //     Alias(
-  //       Option(row)
-  //         .getOrElse { CaveatExistsBooleanAttributeEncoding.rowAnnotationExpression() },
-  //       CaveatExistsBooleanAttributeEncoding.rowAnnotationName()
-  //     )()
-
-  //   val realAttributeAnnotations: Seq[NamedExpression] =
-  //     Option(attributes)
-  //       .map { attributes =>
-
-  //         // CreateNamedStruct takes parameters in groups of 2: name -> value
-  //         attributes.map { case (a, b) => 
-  //           Alias(b, CaveatExistsBooleanAttributeEncoding.attributeAnnotationName(a))() 
-  //         }
-  //       }
-  //       .getOrElse { 
-  //         schema.map { attr => 
-  //           Alias(
-  //             CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(attr.name),
-  //             CaveatExistsBooleanAttributeEncoding.attributeAnnotationName(attr.name)
-  //           )()
-  //         }
-  //       }
-
-  //   realRowAnnotation +: realAttributeAnnotations
-  // }
 }

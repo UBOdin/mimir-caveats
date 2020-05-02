@@ -47,7 +47,11 @@ class CaveatExistsInExpression(
     Option(planCompiler).getOrElse { new CaveatExistsInPlan(pedantic) }
   val withoutExpectingAggregate =
     if(expectAggregate){
-      new CaveatExistsInExpression(pedantic = pedantic, expectAggregate = false)
+      new CaveatExistsInExpression(
+        pedantic = pedantic, 
+        expectAggregate = false,
+        planCompiler = planCompiler
+      )
     } else { this }
 
 
