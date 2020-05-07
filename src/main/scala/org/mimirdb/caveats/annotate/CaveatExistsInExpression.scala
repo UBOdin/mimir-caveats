@@ -85,10 +85,10 @@ class CaveatExistsInExpression(
       // attributes (e.g., part of the grouping expressions).  If so, the
       // corresponding annotation lookup needs to be wrapped in an aggregate.
       case a: Attribute if expectAggregate =>
-        aggregateBoolOr(planCompiler.internalEncoding.annotationFor(a))
+        aggregateBoolOr(compilePlan.internalEncoding.annotationFor(a))
 
-      case a: Attribute =>
-        planCompiler.internalEncoding.annotationFor(a)
+      case a: Attribute => compilePlan.internalEncoding.annotationFor(a)
+      
 
       // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or 
       // a scalar subquery).  We can get a bit more fancy eventually, but for now let's take a
