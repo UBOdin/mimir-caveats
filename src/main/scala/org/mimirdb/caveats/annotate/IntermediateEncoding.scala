@@ -46,9 +46,9 @@ trait IntermediateEncoding
           val byExprId = replace.map { case (a, v) => a.exprId -> v }
                                 .toMap
           oldPlan.output.map { attr => 
-            attr -> byExprId.getOrElse(attr.exprId, getDefault(attr))
+            annotationFor(attr).toAttribute -> byExprId.getOrElse(attr.exprId, getDefault(attr))
           }
-        } else { attributes }
+        } else { attributes.map { case (a, v) => annotationFor(a).toAttribute -> v } }
       ),
       foldOr((
         (
@@ -84,7 +84,7 @@ trait IntermediateEncoding
   {
     val rhsRowAttr = AttributeReference("__MIMIR_JOIN_RHS_TEMP", annotationForRow.dataType)()
     val rhsNonRowAttrs = 
-      rhs.output.filter { _.exprId.equals(annotationForRow.exprId) } 
+      rhs.output.filterNot { _.name.equals(annotationForRow.name) } 
     val safeRhs = 
       Project(
         rhsNonRowAttrs :+ Alias(annotationForRow, rhsRowAttr.name)(rhsRowAttr.exprId),

@@ -13,7 +13,7 @@ import org.apache.spark.sql.types._
 
 import org.mimirdb.test._
 import org.mimirdb.caveats.implicits._
-import org.mimirdb.caveats.annotate.CaveatExistsBooleanAttributeEncoding
+import org.mimirdb.caveats.annotate.CaveatExistsAttributeAnnotation
 
 class ExpressionSpec
   extends Specification
@@ -48,7 +48,7 @@ class ExpressionSpec
     val result =
       wrapper
         .projectList
-        .find { _.name.equals(CaveatExistsBooleanAttributeEncoding.attributeAnnotationName("TEST")) }
+        .find { _.exprId.equals(CaveatExistsAttributeAnnotation.annotationFor(wrapper.output(0)).exprId) }
         .get
         .children(0) // Strip off the Alias
         // .asInstanceOf[CreateNamedStruct]
