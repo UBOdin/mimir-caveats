@@ -1,2 +1,13 @@
 /project
 /target
+
+.classpath
+.project
+.settings/org.eclipse.core.resources.prefs
+/bin/
+
+.cache-main
+
+.cache-tests
+/.bloop
+/.metals

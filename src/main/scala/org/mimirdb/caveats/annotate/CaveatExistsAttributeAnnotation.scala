@@ -24,7 +24,11 @@ object CaveatExistsAttributeAnnotation
   def annotationFor(attr: Attribute) = 
   {
     if(!attributeAnnotations.contains(attr.exprId)){
-      attributeAnnotations.put(attr.exprId, AttributeReference(annotationName(attr), BooleanType)(NamedExpression.newExprId))
+      attributeAnnotations.put(
+        attr.exprId, 
+        AttributeReference(annotationName(attr), BooleanType)
+                          (NamedExpression.newExprId)
+      )
     }
     attributeAnnotations(attr.exprId)
   }
