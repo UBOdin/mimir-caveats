@@ -9,6 +9,7 @@
   
   <!--+++++++++++++++++++++++  Caveats  +++++++++++++++++++++++++-->
   <logger name="org.mimirdb.caveats" level="ERROR" />
+  <logger name="org.mimirdb.caveats.annotate.CaveatExistsInPlan" level="ERROR" />
   <logger name="org.mimirdb.lenses.inference.InferTypes$" level="ERROR" />
   
   <root level="ERROR">

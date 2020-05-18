@@ -9,3 +9,5 @@
 .cache-main
 
 .cache-tests
+/.bloop
+/.metals

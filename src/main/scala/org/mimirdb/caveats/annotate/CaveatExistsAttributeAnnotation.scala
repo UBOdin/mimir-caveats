@@ -15,12 +15,20 @@ import org.apache.spark.sql.types.BooleanType
 object CaveatExistsAttributeAnnotation
   extends IntermediateEncoding
 {
-  val annotationForRow = AttributeReference("__MIMIR_ROW_TAINT", BooleanType)()
+  val annotationForRow = AttributeReference("__MIMIR_ROW_TAINT", BooleanType)(NamedExpression.newExprId)
   val attributeAnnotations = scala.collection.mutable.Map[ExprId, Attribute]()
+
+  def annotationName(attr: Attribute): String =
+    s"__MIMIR_ATTRIBUTE_${attr.exprId.id}_${attr.name}"
+
   def annotationFor(attr: Attribute) = 
   {
     if(!attributeAnnotations.contains(attr.exprId)){
-      attributeAnnotations.put(attr.exprId, AttributeReference(s"__MIMIR_ATTRIBUTE_${attr.exprId.id}_${attr.name}", BooleanType)())
+      attributeAnnotations.put(
+        attr.exprId, 
+        AttributeReference(annotationName(attr), BooleanType)
+                          (NamedExpression.newExprId)
+      )
     }
     attributeAnnotations(attr.exprId)
   }
@@ -34,6 +42,6 @@ object CaveatExistsAttributeAnnotation
     attributes: Seq[(Attribute, Expression)],
     row: Expression
   ): Seq[NamedExpression] =
-    attributes.map { case (a, e) => aliasTo(a, e) } :+ aliasTo(annotationForRow, row)
+    attributes.map { case (a, e) => aliasTo(annotationFor(a), e) } :+ aliasTo(annotationForRow, row)
   
 }
