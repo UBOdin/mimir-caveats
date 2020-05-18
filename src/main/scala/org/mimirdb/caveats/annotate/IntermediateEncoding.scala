@@ -25,6 +25,25 @@ trait IntermediateEncoding
     row: Expression
   ): Seq[NamedExpression]
 
+  /**
+   * Utility method to assemble a list of NamedAttributes for the specified encoding.  
+   * 
+   * @param oldPlan       The pre-annotation plan (used to get [[attributes]] if omitted)
+   * @param newPlan       The plan being annotated
+   * @param attributes    An explicit list of attributes to build annotations for (optional, will 
+   *                      use [[default]] for all attributes in oldPlan.output if omitted)
+   * @param default       The default annotation.  (optional, defaults to the existing annotation in 
+   *                      [[newPlan]])
+   * @param replace       A list of attribute annotations to replace.  Ignored if [[attributes]] is 
+   *                      also provided.  (optional)
+   * @param row           A replacement row annotation.  (optional, defaults to [[default]] if not 
+   *                      rovided).
+   * @param addToRow      A supplemental row annotation.  Will be ORred with [[row]].
+   * 
+   * This function is designed both to handle explicit overrides for the annotations (the 
+   * [[attributes]] and [[row]] parameters), as well as to support deltas (the [[replace]] and 
+   * [[addToRow]] parameters).
+   */
   def annotations(
     oldPlan: LogicalPlan,
     newChild: LogicalPlan,
@@ -59,6 +78,9 @@ trait IntermediateEncoding
     )
   }
 
+  /**
+   * Annotate the specified plan.  See [[annotations]] for details on parameter usage.
+   */
   def annotate(
     oldPlan: LogicalPlan,
     newPlan: LogicalPlan,

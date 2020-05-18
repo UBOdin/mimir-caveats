@@ -54,16 +54,20 @@ class CaveatExistsInPlan(
   def apply(plan: LogicalPlan): LogicalPlan =
   {
     Project(
-     plan.output :+Alias(
+     plan.output
+        .filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
+      :+Alias(
         CreateNamedStruct(Seq(
           Literal(ROW_FIELD), internalEncoding.annotationForRow,
           Literal(ATTRIBUTE_FIELD), CreateNamedStruct(
-            plan.output.flatMap { attribute => 
-              Seq(
-                Literal(attribute.name),
-                internalEncoding.annotationFor(attribute)
-              )
-            }
+            plan.output
+                .filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
+                .flatMap { attribute => 
+                  Seq(
+                    Literal(attribute.name),
+                    internalEncoding.annotationFor(attribute)
+                  )
+                }
           )
         )),
         ANNOTATION_ATTRIBUTE
@@ -92,7 +96,8 @@ class CaveatExistsInPlan(
     val ret: LogicalPlan = plan match {
 
       /*********************************************************/
-      case _ if Caveats.planIsAnnotated(plan) => plan
+      case _ if Caveats.planIsAnnotated(plan) =>
+        recoverExistingAnnotations(plan)
 
       /*********************************************************/
       case _:ReturnAnswer =>
@@ -578,4 +583,54 @@ class CaveatExistsInPlan(
     return ret
   }
 
+  def recoverExistingAnnotations(plan: LogicalPlan): LogicalPlan =
+  {
+    plan match {
+      // We need to special-case filter, since it passes through its source schema.  Consider the
+      // following example:
+      //
+      //    val df = old.annotated
+      //    df.filter( ??? ).annotated
+      //
+      // The resulting data frame will detect as annotated, because filter just re-uses the schema.
+      // We need to special-case it.  Specifically, recover annotations from the child, and then
+      // process the filter as normal, ignoring the annotation attribute.
+      // 
+      // Note that this is safe, because an annotated filter always has a projection over it.
+      case Filter(condition, child) => 
+        {
+          val conditionAnnotation = annotateExpression(condition)
+          val rewrittenChild = recoverExistingAnnotations(child)
+          val planWithoutAnnotation = Project(
+              plan.output.filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) },
+              plan
+            )
+          internalEncoding.annotate(
+            oldPlan = planWithoutAnnotation,
+            newPlan = Filter(condition, rewrittenChild),
+            addToRow = Seq(conditionAnnotation)
+          )
+        }
+
+      // Otherwise, manually unpack the projection.  This may get a little hairy... it might be
+      // a good idea eventually to add a special case to check to see if this is the projection
+      // wrapper created in apply() above
+      case project:Project => {
+        // if this is not the wrapping projection, then give up and manually unpack the fields
+        val fields = plan.output.filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
+        val annotations =
+          internalEncoding.annotations(
+            oldPlan = Project(fields, plan),
+            newChild = plan,
+            attributes = 
+              fields.map { field => 
+                field -> outputEncoding.attributeAnnotationExpression(field.name)
+              },
+            row = outputEncoding.rowAnnotationExpression()
+          )
+        Project(fields ++ annotations, project)
+      }
+
+    }
+  }
 }
