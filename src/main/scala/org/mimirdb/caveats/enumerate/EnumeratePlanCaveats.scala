@@ -471,6 +471,9 @@ object EnumeratePlanCaveats
       case x:SubqueryAlias => PASS_THROUGH_TO_CHILD(x)
 
       /*********************************************************/
+      case x:Sample => PASS_THROUGH_TO_CHILD(x)
+
+      /*********************************************************/
       case Distinct(child) => recurPlan(
           row = row,
           attributes = attributes,
