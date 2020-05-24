@@ -38,13 +38,20 @@ import org.apache.spark.sql.catalyst.plans.logical.Aggregate
  **/
 class CaveatExistsInExpression(
   pedantic: Boolean,
-  expectAggregate: Boolean
+  expectAggregate: Boolean,
+  planCompiler: CaveatExistsInPlan = null
 )
   extends LazyLogging
 {
+  val compilePlan:CaveatExistsInPlan = 
+    Option(planCompiler).getOrElse { new CaveatExistsInPlan(pedantic) }
   val withoutExpectingAggregate =
     if(expectAggregate){
-      new CaveatExistsInExpression(pedantic = pedantic, expectAggregate = false)
+      new CaveatExistsInExpression(
+        pedantic = pedantic, 
+        expectAggregate = false,
+        planCompiler = planCompiler
+      )
     } else { this }
 
 
@@ -82,10 +89,10 @@ class CaveatExistsInExpression(
       // attributes (e.g., part of the grouping expressions).  If so, the
       // corresponding annotation lookup needs to be wrapped in an aggregate.
       case a: Attribute if expectAggregate =>
-        aggregateBoolOr(CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(a.name))
+        aggregateBoolOr(compilePlan.internalEncoding.annotationFor(a))
 
-      case a: Attribute =>
-        CaveatExistsBooleanAttributeEncoding.attributeAnnotationExpression(a.name)
+      case a: Attribute => compilePlan.internalEncoding.annotationFor(a)
+      
 
       // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or 
       // a scalar subquery).  We can get a bit more fancy eventually, but for now let's take a
@@ -94,7 +101,6 @@ class CaveatExistsInExpression(
       // caveated.
       case sq: SubqueryExpression =>
       {
-        val compilePlan = new CaveatExistsInPlan(pedantic)
         val subqueryWithCaveats = compilePlan(sq.plan)
         val correlatedCaveats = sq.children.map { apply(_) }
 
@@ -106,11 +112,11 @@ class CaveatExistsInExpression(
               Seq(Alias(
                 aggregateBoolOr(
                   foldOr(
-                    compilePlan.annotationEncoding.rowAnnotationExpression(),
+                    compilePlan.internalEncoding.annotationForRow,
                     foldOr(
                       sq.plan.output
-                        .map { attr => compilePlan.annotationEncoding
-                                                  .attributeAnnotationExpression(attr.name) 
+                        .map { attr => compilePlan.internalEncoding
+                                                  .annotationFor(attr) 
                               }:_*
                     )
                   )

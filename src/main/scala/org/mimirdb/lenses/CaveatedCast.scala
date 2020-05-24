@@ -20,7 +20,7 @@ object CaveatedCast
       value = Cast(expr, t), 
       message = Concat(Seq(
         Literal("Could not cast '"),
-        Cast(expr, StringType),
+        Coalesce(Seq(Cast(expr, StringType), Literal("'NULL'"))),
         Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
       )),
       family = family,

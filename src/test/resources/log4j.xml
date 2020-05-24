@@ -9,9 +9,7 @@
       </layout>
   </appender>
 
-  <category name="org.mimirdb.caveats">  
-      <priority value="ERROR" />  
-  </category>  
+
 
   <root>
     <level value="OFF" />

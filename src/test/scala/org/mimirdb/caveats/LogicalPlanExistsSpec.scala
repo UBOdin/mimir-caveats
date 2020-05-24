@@ -11,7 +11,7 @@ import org.mimirdb.caveats.implicits._
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.test._
 
-class LogicalPlanSpec
+class LogicalPlanExistsSpec
   extends Specification
   with SharedSparkTestInstance
 {
@@ -272,6 +272,31 @@ class LogicalPlanSpec
         // only be affected by a record in another group sneaking in
         result.map { _._2("A") } must be equalTo(Seq(true, true, false, true, true))
       }
+    }
+
+    "Support Annotation Re-Use" >>  {
+      val base = Caveats.annotate(
+        dfr.select($"A".caveat("HI!").as("A"))
+      )
+
+      annotate(
+        base
+      ) { result =>
+        result.size must beGreaterThan(1)
+        val (row, fields) = result(0)
+        fields("A") must be equalTo(true)
+        row must beFalse
+      } 
+
+      annotate(
+        base.filter(base("A") === 4)
+      ) { result =>
+        result.size must be equalTo(1)
+        val (row, fields) = result(0)
+        fields("A") must be equalTo(true)
+        row must beTrue
+      } 
+
     }
 
   }

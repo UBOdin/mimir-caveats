@@ -21,7 +21,7 @@ trait AnnotationInstrumentationStrategy
   def apply(plan: LogicalPlan): LogicalPlan
 
   // return annotation encoding produced by this instrumentation style
-  def annotationEncoding: AnnotationEncoding
+  def outputEncoding: AnnotationEncoding
 
   // return the type of annotations that are propagated
   def annotationType: AnnotationType

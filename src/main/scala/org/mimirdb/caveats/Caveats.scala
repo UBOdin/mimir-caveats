@@ -56,7 +56,7 @@ object Caveats
     val baseSchema = plan.schema
     val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else baseSchema.add(
           annotationAttribute,
-          annotator.annotationEncoding.annotationStruct(plan.schema.fieldNames),
+          annotator.outputEncoding.annotationStruct(plan.schema.fieldNames),
           false
     )
 
@@ -82,7 +82,7 @@ object Caveats
     val rowEncoder = RowEncoder(
         normalAttrs.add(
           annotationAttribute,
-          annotator.annotationEncoding.annotationStruct(normalAttrs.fieldNames),
+          annotator.outputEncoding.annotationStruct(normalAttrs.fieldNames),
           false
         )
     )

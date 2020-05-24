@@ -20,7 +20,7 @@ import org.mimirdb.caveats.Constants._
 
 import org.mimirdb.caveats.Constants._
 
-object CaveatExistsBooleanArrayEncoding extends AnnotationEncoding
+object CaveatExistsBooleanStructEncoding extends AnnotationEncoding
 {
 
   def allAttributeAnnotationsExpression(

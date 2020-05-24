@@ -14,7 +14,7 @@ object InferTypes
   extends LazyLogging
 {
   
-  val TRAIN_LIMIT = 1000
+  val TRAIN_LIMIT = 100
 
   def simpleCastTest(t:DataType):(Column => Column) = 
     (col: Column) => not(isnull(col.cast(t)))
@@ -124,9 +124,9 @@ object InferTypes
     TYPES.zipWithIndex
          .map { case ((t, weight, _), idx) =>
             logger.trace(s"TYPE: $t -> ${typeLookups.getLong(idx+1)}")
-            val count = typeLookups.getLong(idx+1)
+            val count = Option(typeLookups.get(idx+1)).getOrElse("0").toString().toLong
             
-            (t, typeLookups.getLong(idx+1), weight)
+            (t, count, weight)
          }
          .filter { _._2 > 0 }
          .sortBy { x => (-x._2, x._3) }
