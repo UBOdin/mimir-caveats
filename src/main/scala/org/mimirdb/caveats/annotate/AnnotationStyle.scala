@@ -51,28 +51,33 @@ trait AnnotationType
 trait AnnotationEncoding
 {
   // return struct type used to store annotations of this schema
-  def annotationStruct(fieldNames:Seq[String]): StructType = {
-    annotationStruct(StructType(fieldNames.map { f => StructField(f, StringType, true) }))
+  def annotationStructFromAttrs(fieldNames:Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): StructType = {
+    annotationStruct(StructType(fieldNames.map { f => StructField(f, StringType, true) }), prefix)
   }
 
   // return struct type used to store annotations for this schema
-  def annotationStruct(baseSchema:StructType): StructType
+  def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType
+
+  // return schema after adding annotations
+  def annotatedSchema(baseSchema:StructType): StructType = {
+    StructType(baseSchema.fields ++ annotationStruct(baseSchema).fields)
+  }
 
   // get expression to access row annotation
-  def rowAnnotationExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression
+  def rowAnnotationExpressions(prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression]
 
   // get all attribute annotations
-  def allAttributeAnnotationsExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression
+  def allAttributeAnnotationsExpressions(baseSchema: StructType, prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression]
 
   // get access to annotation of an individual attribute
-  def attributeAnnotationExpression(
+  def attributeAnnotationExpressions(
     attr: String,
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression
+    prefix: String = ANNOTATION_ATTRIBUTE
+  ): Seq[Expression]
 
-  def attributeAnnotationExpressionFromAttr(
+  def attributeAnnotationExpressionFromAttrs(
     attr: Attribute,
-    annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    attributeAnnotationExpression(attr.name, annotation)
+    prefix: String = ANNOTATION_ATTRIBUTE
+  ): Seq[Expression] =
+    attributeAnnotationExpressions(attr.name, prefix)
 }

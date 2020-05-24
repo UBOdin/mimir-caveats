@@ -31,7 +31,7 @@ object CaveatRangeEncoding
 {
 
     /**
-    *  Schema of the caveat column is:
+    *  Schema of the caveat columns for annotation prefix _P is:
     *  ROW_FIELD
     *      LOWER_BOUND_FIELD
     *      BEST_GUESS_FIELD
@@ -45,54 +45,60 @@ object CaveatRangeEncoding
     *           LOWER_BOUND_FIELD
     *           UPPER_BOUND_FIELD
     */
-  def annotationStruct(baseSchema:StructType): StructType = {
-    StructType(Seq(
-      StructField(ROW_FIELD,
-        StructType(Seq(
-          StructField(LOWER_BOUND_FIELD,IntegerType, false),
-          StructField(BEST_GUESS_FIELD,IntegerType, false),
-          StructField(UPPER_BOUND_FIELD,IntegerType, false)
-        )), false),
-      StructField(ATTRIBUTE_FIELD, StructType(
-        baseSchema.fields.map { x =>
-          StructField(x.name,
-            StructType(Seq(
-              StructField(LOWER_BOUND_FIELD, x.dataType, false),
-              StructField(UPPER_BOUND_FIELD, x.dataType, false)
-            ))
-          )
-        }
-      ), false)
-    ))
+  def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType = {
+    StructType(rowAnnotationStruct(prefix) ++ attributeAnnotationStruct(baseSchema, prefix))
   }
 
+  def rowAnnotationStruct(prefix:String) : Seq[StructField] =
+    Seq(
+      StructField(addAnnotPrefix(ROW_FIELD, LOWER_BOUND_FIELD ,prefix), IntegerType, false),
+      StructField(addAnnotPrefix(ROW_FIELD, BEST_GUESS_FIELD, prefix), IntegerType, false),
+      StructField(addAnnotPrefix(ROW_FIELD, UPPER_BOUND_FIELD, prefix), IntegerType, false)
+    )
+
+  def attributeAnnotationStruct(baseSchema: StructType, prefix: String): Seq[StructField] =
+  {
+    baseSchema.fields.flatMap { x =>
+      Seq(
+        StructField(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, prefix), x.dataType, false),
+        StructField(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, prefix), x.dataType, false)
+      )
+    }
+  }
+
+
+
+
   // get expression to access row annotation
-  def rowAnnotationExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ROW_FIELD)
+  def rowAnnotationExpressions(annotation: String = ANNOTATION_ATTRIBUTE): Seq[Expression] =
+    Seq(
+      UnresolvedAttribute(addAnnotPrefix(ROW_FIELD, LOWER_BOUND_FIELD, annotation)),
+      UnresolvedAttribute(addAnnotPrefix(ROW_FIELD, BEST_GUESS_FIELD, annotation)),
+      UnresolvedAttribute(addAnnotPrefix(ROW_FIELD, UPPER_BOUND_FIELD, annotation))
     )
 
 
   // get all attribute annotations
-  def allAttributeAnnotationsExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ATTRIBUTE_FIELD),
-    )
+  def allAttributeAnnotationsExpressions(baseSchema: StructType, annotation: String = ANNOTATION_ATTRIBUTE): Seq[Expression] =
+    baseSchema.fields.flatMap{ x =>
+      Seq(
+        UnresolvedAttribute(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, annotation)),
+        UnresolvedAttribute(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, annotation))
+      )
+    }
 
   // get access to annotation of an individual attribute
-  def attributeAnnotationExpression(
+  def attributeAnnotationExpressions(
     attrName: String,
     annotation: String = ANNOTATION_ATTRIBUTE
-  ): Expression =
-    UnresolvedExtractValue(
-      allAttributeAnnotationsExpression(annotation),
-      Literal(attrName)
+  ): Seq[Expression] =
+    Seq(
+      UnresolvedAttribute(addAnnotPrefix(attrName, LOWER_BOUND_FIELD, annotation)),
+      UnresolvedAttribute(addAnnotPrefix(attrName, UPPER_BOUND_FIELD, annotation))
     )
 
   def rowLBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
-    lbExpression(rowAnnotationExpression(annotation))
+    lbExpression(rowAnnotationExpressions(annotation))
 
   def rowBGexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
     bgRowExpression(rowAnnotationExpression(annotation))
@@ -149,6 +155,6 @@ object CaveatRangeEncoding
       Literal(UPPER_BOUND_FIELD)
     )
 
-
+  def addAnnotPrefix(attr: String, suffix: String, prefix: String = ANNOTATION_ATTRIBUTE) = prefix + "_" + attr + "_" + suffix
 
 }
