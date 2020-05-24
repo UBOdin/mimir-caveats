@@ -5,12 +5,16 @@ import org.apache.spark.sql.types.{ StructType, StructField }
 import org.apache.spark.sql.catalyst.expressions.{
   Expression,
   Literal,
-  Attribute
+  Attribute,
+  NamedExpression
 }
 
 import org.mimirdb.caveats.UncertaintyModel
 import org.mimirdb.caveats.Constants._
 import org.apache.spark.sql.types.StringType
+import org.apache.spark.ml.attribute.UnresolvedAttribute
+
+
 
 /*
  * Instrument a logical plan to propagate a specific type of annotations.
@@ -40,23 +44,45 @@ trait AnnotationType
   def defaultEncoding: AnnotationEncoding
 }
 
-/*
+/**
  * An encoding of a type of annotation `AnnotationType`
  *  boolean row level
  *  boolean row level + boolean attribute level
  *  semiring N^3 annotation + range annotations for attributes
- *
- *  the assumption is that annotation are stored in a single attribute (using nested types)
  */
 trait AnnotationEncoding
 {
+  // return struct type used to store annotations for this schema
+  def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType
+
   // return struct type used to store annotations of this schema
   def annotationStructFromAttrs(fieldNames:Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): StructType = {
     annotationStruct(StructType(fieldNames.map { f => StructField(f, StringType, true) }), prefix)
   }
 
-  // return struct type used to store annotations for this schema
-  def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType
+  // given a schema returns true if the schema has the correct annotation attributes
+  def isValidAnnotatedStructTypeSchema(schema: StructType, prefix: String  = ANNOTATION_ATTRIBUTE): Boolean = {
+    isValidAnnotatedSchema(schema.fields.map(x => x.name), prefix)
+  }
+
+  def isValidAnnotatedNamedExpressionSchema(schema: Seq[NamedExpression], prefix: String = ANNOTATION_ATTRIBUTE): Boolean = {
+    isValidAnnotatedSchema(schema.map(x => x.name).toSeq, prefix)
+  }
+
+  def isValidAnnotatedSchema(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Boolean
+
+  // given an annotated schema return the non-annotation attributes
+  def getNormalAttributes(schema: StructType, prefix: String): Seq[StructField] = {
+    val annotNames = getNormalAttributes(schema.fields.map(x => x.name), prefix)
+    StructType(schema.fields.filterNot(x => annotNames.contains(x.name)))
+  }
+
+  def getNormalAttributesFromNamedExpressions(schema: Seq[NamedExpression], prefix: String): Seq[NamedExpression] = {
+    val annotNames = getNormalAttributes(schema.map(x => x.name), prefix)
+    schema.filterNot(x => annotNames.contains(x.name))
+  }
+
+  def getNormalAttributes(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Seq[String]
 
   // return schema after adding annotations
   def annotatedSchema(baseSchema:StructType): StructType = {
@@ -69,6 +95,10 @@ trait AnnotationEncoding
   // get all attribute annotations
   def allAttributeAnnotationsExpressions(baseSchema: StructType, prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression]
 
+  def allAttributeAnnotationsExpressionsFromExpressions(baseSchema: Seq[NamedExpression], prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression] = {
+    allAttributeAnnotationsExpressions(StructType(baseSchema.map(x => StructField(x.name, x.dataType))), prefix)
+  }
+
   // get access to annotation of an individual attribute
   def attributeAnnotationExpressions(
     attr: String,
@@ -80,4 +110,40 @@ trait AnnotationEncoding
     prefix: String = ANNOTATION_ATTRIBUTE
   ): Seq[Expression] =
     attributeAnnotationExpressions(attr.name, prefix)
+}
+
+/**
+  * A special type of [AnnotationEncoding] that uses a single attribute to store annotations.
+  */
+trait SingleAttributeAnnotationEncoding extends AnnotationEncoding {
+
+  def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType = {
+    StructType(Seq(StructField(prefix, nestedAnnotationAttributeStruct(baseSchema), false)))
+  }
+
+  def nestedAnnotationAttributeStruct(baseSchema:StructType): StructType
+
+  def rowAnnotationExpressions(prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression] = {
+    Seq(rowAnnotationExpression(prefix))
+  }
+
+  def rowAnnotationExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression
+
+  def allAttributeAnnotationsExpressions(baseSchema: StructType, prefix: String = ANNOTATION_ATTRIBUTE): Seq[Expression] = {
+    Seq(allAttributeAnnotationsExpression(prefix))
+  }
+
+  def allAttributeAnnotationsExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression
+
+  def attributeAnnotationExpressions(
+    attr: String,
+    prefix: String = ANNOTATION_ATTRIBUTE
+  ): Seq[Expression] = {
+    Seq(attributeAnnotationExpression(attr,prefix))
+  }
+
+  def attributeAnnotationExpression(attr: String, annotation: String = ANNOTATION_ATTRIBUTE): Expression
+
+  def getNormalAttributes(schema: Seq[String], prefix: String): Seq[String] = schema.filterNot(_ == prefix)
+
 }

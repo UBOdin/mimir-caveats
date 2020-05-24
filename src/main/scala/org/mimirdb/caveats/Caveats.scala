@@ -54,11 +54,8 @@ object Caveats
     val plan = execState.analyzed
     val annotated = annotator(plan)
     val baseSchema = plan.schema
-    val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else baseSchema.add(
-          annotationAttribute,
-          annotator.outputEncoding.annotationStruct(plan.schema.fieldNames),
-          false
-    )
+    val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else
+          annotator.outputEncoding.annotationStruct(baseSchema, annotationAttribute)
 
     return new DataFrame(
       execState.sparkSession,
@@ -80,12 +77,8 @@ object Caveats
     val annotated = annotator.translateFromUncertaintyModel(plan, model)
     val normalAttrs = model.adaptedSchema(plan.schema)
     val rowEncoder = RowEncoder(
-        normalAttrs.add(
-          annotationAttribute,
-          annotator.outputEncoding.annotationStruct(normalAttrs.fieldNames),
-          false
+          annotator.outputEncoding.annotationStruct(normalAttrs)
         )
-    )
 
     println(normalAttrs)
     println(rowEncoder)
