@@ -39,34 +39,25 @@ class RangeExpressionSpec
   {
     // create a single row with the right annotation attribute
     val dt = sparkDT(fields(0)._2)
-    val data =
-    Seq(
-      Row(
+    val data = Seq(
+      Row.fromSeq(
         fields.map { _._2 }
-          :+
-          Row(
-            Row(rowann._1, rowann._2, rowann._3),
-            Row.fromSeq(
-              fields.map { case (lb,_,ub) => Row(lb, ub) }
-            )
-          )
-        :_*
+          ++ Seq(rowann._1, rowann._2, rowann._3)
+          ++ fields.flatMap { case (lb,_,ub) => Seq(lb,ub) }
       )
     )
     val normalFields = fieldNames.slice(0, fields.length ).map(StructField(_, dt, true))
+
     val schema =
       StructType(
-        normalFields :+
-          StructField(Constants.ANNOTATION_ATTRIBUTE,
-            CaveatRangeEncoding.annotationStruct(
-              StructType(normalFields)
-            )
-          )
+        normalFields ++
+          CaveatRangeEncoding.annotationStruct(StructType(normalFields)).fields
       )
-     spark.createDataFrame(
+     val df = spark.createDataFrame(
        spark.sparkContext.parallelize(data),
        schema
      )
+    df
   }
 
   def normalRow(fields:Any*) : DataFrame =
@@ -96,7 +87,6 @@ class RangeExpressionSpec
     // create a single row with the right annotation attribute
     val df = normalRow(fields.map(_._2):_*)
     val annDF = df.select(fields.zip(fieldNames).map( _ match { case (v,nam) => cr(v._1, v._2, v._3).as(nam) } ):_*)
-    annDF.show(1,100)
     annDF
   }
 
@@ -117,8 +107,6 @@ class RangeExpressionSpec
     // indf.show(1,100)
     val outdf = rangeRowDF(outrowann, outfields:_*)
 
-    val eresult = rangeAnnotate(e, indf)
-
     if (trace)
     {
       println(s"EXPRESSION: $e")
@@ -126,6 +114,12 @@ class RangeExpressionSpec
       indf.show(1,100)
       println("EXPECTED OUTPUT DATA:")
       outdf.show(1,100)
+    }
+
+    val eresult = rangeAnnotate(e, indf, trace)
+
+    if (trace)
+    {
       println("ACTUAL OUTPUT DATA:")
       eresult.show(1,100)
       println("REWRITTTEN QUERY PLAN DATA:")
@@ -134,7 +128,9 @@ class RangeExpressionSpec
     dfEquals(eresult, outdf)
   }
 
-  def rangeAnnotate[T](e: Column, input: DataFrame): DataFrame = input.select(e).rangeCaveats
+  def rangeAnnotate[T](e: Column, input: DataFrame, trace: Boolean): DataFrame = {
+    Caveats.annotate(input.select(e), CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+  }
 
   "RangeAnnotateExpression" in {
     import spark.implicits._

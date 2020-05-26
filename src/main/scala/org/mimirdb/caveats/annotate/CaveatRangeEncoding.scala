@@ -49,35 +49,42 @@ object CaveatRangeEncoding
   }
 
   override def isValidAnnotatedStructTypeSchema(schema: StructType, prefix: String = ANNOTATION_ATTRIBUTE): Boolean = {
-    val normalAttrs = StructType(getNormalAttributes(schema, prefix))
+    val normalAttrs = StructType(getNormalAttributesFromSparkType(schema, prefix))
     val annotatedSchema = annotationStruct(normalAttrs, prefix)
-    schema == annotatedSchema
+//        println(s"================================================================================\ncheck schema is valid whether valid:\n\nnormal attributes: $normalAttrs\nannotated schema: $annotatedSchema\ncheck schema: $schema")
+    schema.fields.toSeq == normalAttrs ++ annotatedSchema.fields
   }
 
   def isValidAnnotatedSchema(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Boolean = {
     val normalAttrs = StructType(getNormalAttributes(schema, prefix)
       .map(x => StructField(x, IntegerType, false)))
     val annotatedSchema = annotationStruct(normalAttrs, prefix)
-    schema == annotatedSchema
+    schema == normalAttrs.map( _.name) ++ annotatedSchema.fields.map( _.name)
   }
 
   def getNormalAttributes(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Seq[String] = {
-    schema.filter(x => x.startsWith(prefix))
+    schema.filterNot(x => x.startsWith(prefix))
   }
 
   def rowAnnotationStruct(prefix:String) : Seq[StructField] =
     Seq(
-      StructField(addAnnotPrefix(ROW_FIELD, LOWER_BOUND_FIELD ,prefix), IntegerType, false),
+      StructField(addAnnotPrefix(ROW_FIELD, LOWER_BOUND_FIELD, prefix), IntegerType, false),
       StructField(addAnnotPrefix(ROW_FIELD, BEST_GUESS_FIELD, prefix), IntegerType, false),
       StructField(addAnnotPrefix(ROW_FIELD, UPPER_BOUND_FIELD, prefix), IntegerType, false)
     )
+
+  def rowAnnotationAttrNames(prefix: String = ANNOTATION_ATTRIBUTE): Seq[String] = Seq (
+    addAnnotPrefix(ROW_FIELD, LOWER_BOUND_FIELD, prefix),
+    addAnnotPrefix(ROW_FIELD, BEST_GUESS_FIELD, prefix),
+    addAnnotPrefix(ROW_FIELD, UPPER_BOUND_FIELD, prefix)
+  )
 
   def attributeAnnotationStruct(baseSchema: StructType, prefix: String): Seq[StructField] =
   {
     baseSchema.fields.flatMap { x =>
       Seq(
-        StructField(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, prefix), x.dataType, false),
-        StructField(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, prefix), x.dataType, false)
+        StructField(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, prefix), x.dataType, true),
+        StructField(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, prefix), x.dataType, true)
       )
     }
   }
@@ -90,6 +97,11 @@ object CaveatRangeEncoding
       UnresolvedAttribute(addAnnotPrefix(ROW_FIELD, UPPER_BOUND_FIELD, annotation))
     )
 
+  // check whether an attribute is an annotaiton attribute
+  def isAnnotationAttribute(name: String, annotation: String = ANNOTATION_ATTRIBUTE): Boolean =
+    name.startsWith(annotation)
+
+  def isRowAnnotationAttribute(name: String, annotation: String = ANNOTATION_ATTRIBUTE): Boolean = name.startsWith(addAnnotPrefix(ROW_FIELD, "", annotation))
 
   // get all attribute annotations
   def allAttributeAnnotationsExpressions(baseSchema: StructType, annotation: String = ANNOTATION_ATTRIBUTE): Seq[NamedExpression] =
@@ -113,6 +125,14 @@ object CaveatRangeEncoding
       UnresolvedAttribute(addAnnotPrefix(attrName, LOWER_BOUND_FIELD, annotation)),
       UnresolvedAttribute(addAnnotPrefix(attrName, UPPER_BOUND_FIELD, annotation))
     )
+
+  def attributeAnnotationAttrName(
+    attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Seq[String] = Seq(
+    addAnnotPrefix(attrName, LOWER_BOUND_FIELD, annotation),
+    addAnnotPrefix(attrName, UPPER_BOUND_FIELD, annotation)
+  )
 
   def attributeAnnotationExpressionFromAttr(
     a: Attribute,
@@ -141,7 +161,7 @@ object CaveatRangeEncoding
   ): Expression =
     attributeAnnotationExpressions(attrName, annotation)(0)
 
-  def bgAttrExpression(a: Attribute): Expression =
+  def attrBGexpression(a: Attribute): Expression =
     a //TODO do we want this to work like this?
 
   def attrUBexpression(attrName: String,

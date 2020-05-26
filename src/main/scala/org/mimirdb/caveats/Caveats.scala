@@ -47,15 +47,21 @@ object Caveats
    **/
   def annotate(dataset:DataFrame,
     annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
-    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE,
+    trace: Boolean = false
   ): DataFrame =
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = annotator(plan)
+    val annotated = annotator(plan, trace)
     val baseSchema = plan.schema
-    val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else
-          annotator.outputEncoding.annotationStruct(baseSchema, annotationAttribute)
+    val annotSchema = if (annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema)) baseSchema else
+          annotator.outputEncoding.annotatedSchema(baseSchema, annotationAttribute)
+
+    if(trace) {
+      println("is already annotated? " + annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema))
+      println(s"base schema: $baseSchema \n\nrow encoder $annotSchema")
+    }
 
     return new DataFrame(
       execState.sparkSession,
@@ -64,6 +70,7 @@ object Caveats
     )
   }
 
+  //TODO adapt to use new encoding-specific function
   def planIsAnnotated(plan: LogicalPlan, annotation: String = ANNOTATION_ATTRIBUTE): Boolean =
     plan.output.map { _.name }.exists { _.equals(annotation) }
 
@@ -71,17 +78,21 @@ object Caveats
     df: DataFrame,
     model: UncertaintyModel,
     annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
-    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE,
+    trace: Boolean = false
   ): DataFrame = {
     val plan = df.queryExecution.analyzed
     val annotated = annotator.translateFromUncertaintyModel(plan, model)
     val normalAttrs = model.adaptedSchema(plan.schema)
     val rowEncoder = RowEncoder(
-          annotator.outputEncoding.annotationStruct(normalAttrs)
+          annotator.outputEncoding.annotatedSchema(normalAttrs)
         )
 
-    println(normalAttrs)
-    println(rowEncoder)
+    if (trace) {
+      println("========================================\nTIP REWRITE\n========================================")
+      println("Normal attributes:\n" + normalAttrs)
+      println("Row encdoer:\n" + rowEncoder)
+    }
     return new DataFrame(
       df.queryExecution.sparkSession,
       annotated,

@@ -51,7 +51,7 @@ class CaveatExistsInPlan(
    * EnumerateCaveats should not return any row-level caveats when limited to
    * the slice including the specified row.
    */
-  def apply(plan: LogicalPlan): LogicalPlan =
+  def apply(plan: LogicalPlan, trace: Boolean = false): LogicalPlan =
   {
     Project(
      plan.output

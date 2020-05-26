@@ -100,9 +100,9 @@ object CaveatRangeExpression
       case l: Literal => RangeBoundedExpr.makeCertain(l)
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => RangeBoundedExpr(CaveatRangeEncoding.lbExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a)),
-        CaveatRangeEncoding.bgAttrExpression(a),
-        CaveatRangeEncoding.ubExpression(CaveatRangeEncoding.attributeAnnotationExpressionFromAttr(a))
+      case a: Attribute => RangeBoundedExpr(CaveatRangeEncoding.attrLBexpression(a.name),
+        CaveatRangeEncoding.attrBGexpression(a),
+        CaveatRangeEncoding.attrUBexpression(a.name)
       )
 
       // Not entirely sure how to go about handling subqueries yet (requires attribute level ranges like aggregation)
@@ -240,22 +240,10 @@ object CaveatRangeExpression
   {
     e match {
       case
-        UnresolvedExtractValue(
-          UnresolvedExtractValue(
-            UnresolvedAttribute(Seq(Constants.ANNOTATION_ATTRIBUTE)),
-            Literal(b,StringType)
-          ),
-          Literal(attr:UTF8String, StringType)
-        )
-        if b.equals(UTF8String.fromString(Constants.ATTRIBUTE_FIELD))
+        UnresolvedAttribute(Seq(name))
+        if CaveatRangeEncoding.isAnnotationAttribute(name.toString())
         => {
-          val result = UnresolvedExtractValue(
-            UnresolvedExtractValue(
-              UnresolvedAttribute(attrToAnnotAttr(attr.toString())),
-              Literal(Constants.ATTRIBUTE_FIELD),
-            ),
-            Literal(attr.toString())
-          )
+          val result = UnresolvedAttribute(attrToAnnotAttr(name.toString))
           // println(s"the result $result")
           result
         }

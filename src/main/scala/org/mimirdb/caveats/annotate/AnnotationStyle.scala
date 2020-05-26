@@ -22,7 +22,7 @@ import org.apache.spark.ml.attribute.UnresolvedAttribute
 trait AnnotationInstrumentationStrategy
 {
   // rewrite a logical plan to propagate annotations
-  def apply(plan: LogicalPlan): LogicalPlan
+  def apply(plan: LogicalPlan, trace: Boolean = false): LogicalPlan
 
   // return annotation encoding produced by this instrumentation style
   def outputEncoding: AnnotationEncoding
@@ -52,6 +52,11 @@ trait AnnotationType
  */
 trait AnnotationEncoding
 {
+  // return the annotated schema for this basic schema
+  def annotatedSchema(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType = {
+    StructType(baseSchema.fields ++ annotationStruct(baseSchema, prefix).fields)
+  }
+
   // return struct type used to store annotations for this schema
   def annotationStruct(baseSchema:StructType, prefix: String = ANNOTATION_ATTRIBUTE): StructType
 
@@ -72,14 +77,18 @@ trait AnnotationEncoding
   def isValidAnnotatedSchema(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Boolean
 
   // given an annotated schema return the non-annotation attributes
-  def getNormalAttributes(schema: StructType, prefix: String): Seq[StructField] = {
+  def getNormalAttributesFromSparkType(schema: StructType, prefix: String): Seq[StructField] = {
     val annotNames = getNormalAttributes(schema.fields.map(x => x.name), prefix)
-    StructType(schema.fields.filterNot(x => annotNames.contains(x.name)))
+    StructType(schema.fields.filter(x => annotNames.contains(x.name)))
   }
 
-  def getNormalAttributesFromNamedExpressions(schema: Seq[NamedExpression], prefix: String): Seq[NamedExpression] = {
-    val annotNames = getNormalAttributes(schema.map(x => x.name), prefix)
-    schema.filterNot(x => annotNames.contains(x.name))
+  def getNormalAttributesFromNamedExpressions(schema: Seq[NamedExpression], prefix: String = ANNOTATION_ATTRIBUTE): Seq[NamedExpression] = {
+    //println(s"in schema $schema")
+    val normalAttrs = getNormalAttributes(schema.map(x => x.name), prefix)
+    //println(s"annot atttributes $normalAttrs")
+    val normal = schema.filter(x => normalAttrs.contains(x.name))
+    //println(s"normal: $normal")
+    normal
   }
 
   def getNormalAttributes(schema: Seq[String], prefix: String = ANNOTATION_ATTRIBUTE): Seq[String]
