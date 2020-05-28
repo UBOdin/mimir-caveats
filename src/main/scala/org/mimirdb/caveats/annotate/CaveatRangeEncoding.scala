@@ -181,3 +181,144 @@ object CaveatRangeEncoding
   def addAnnotPrefix(attr: String, suffix: String, prefix: String = ANNOTATION_ATTRIBUTE) = prefix + "_" + attr + "_" + suffix
 
 }
+
+
+/**
+  * Encoding of [CaveatRangeType] annotation for which we record for each attribute
+  * value an lower and upper bound across all possible worlds.
+  * Furthermore, for each row we record and upper / lower bound on its
+  * annotation (multiplicity) across all worlds.
+  *
+  *  Currently only top-level attributes are annotated. So this would not work
+  *  for attributes that are nested.
+  **/
+object SingleAttributeCaveatRangeEncoding
+  extends SingleAttributeAnnotationEncoding
+{
+
+    /**
+    *  Schema of the caveat column is:
+    *  ROW_FIELD
+    *      LOWER_BOUND_FIELD
+    *      BEST_GUESS_FIELD
+    *      UPPER_BOUND_FIELD
+    *  ATTRIBUTE_FIELD
+    *      A1
+    *           LOWER_BOUND_FIELD
+    *           UPPER_BOUND_FIELD
+    *      ...
+    *      An
+    *           LOWER_BOUND_FIELD
+    *           UPPER_BOUND_FIELD
+    */
+  def nestedAnnotationAttributeStruct(baseSchema:StructType): StructType = {
+    StructType(Seq(
+      StructField(ROW_FIELD,
+        StructType(Seq(
+          StructField(LOWER_BOUND_FIELD,IntegerType, false),
+          StructField(BEST_GUESS_FIELD,IntegerType, false),
+          StructField(UPPER_BOUND_FIELD,IntegerType, false)
+        )), false),
+      StructField(ATTRIBUTE_FIELD, StructType(
+        baseSchema.fields.map { x =>
+          StructField(x.name,
+            StructType(Seq(
+              StructField(LOWER_BOUND_FIELD, x.dataType, false),
+              StructField(UPPER_BOUND_FIELD, x.dataType, false)
+            ))
+          )
+        }
+      ), false)
+    ))
+  }
+
+  // Members declared in org.mimirdb.caveats.annotate.AnnotationEncoding
+  def isValidAnnotatedSchema(schema: Seq[String],prefix: String): Boolean = ???
+
+
+  // get expression to access row annotation
+  def rowAnnotationExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    UnresolvedExtractValue(
+      UnresolvedAttribute(annotation),
+      Literal(ROW_FIELD)
+    )
+
+
+  // get all attribute annotations
+  def allAttributeAnnotationsExpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    UnresolvedExtractValue(
+      UnresolvedAttribute(annotation),
+      Literal(ATTRIBUTE_FIELD),
+    )
+
+  // get access to annotation of an individual attribute
+  def attributeAnnotationExpression(
+    attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
+    UnresolvedExtractValue(
+      allAttributeAnnotationsExpression(annotation),
+      Literal(attrName)
+    )
+
+  def rowLBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    lbExpression(rowAnnotationExpression(annotation))
+
+  def rowBGexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    bgRowExpression(rowAnnotationExpression(annotation))
+
+  def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+    ubExpression(rowAnnotationExpression(annotation))
+
+  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr =
+    RangeBoundedExpr(
+      rowLBexpression(annotation),
+      rowBGexpression(annotation),
+      rowUBexpression(annotation)
+    )
+
+
+  def attrLBexpression(attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
+    lbExpression(
+      UnresolvedExtractValue(
+        allAttributeAnnotationsExpression(annotation),
+        Literal(attrName)
+      )
+    )
+
+  def attrUBexpression(attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): Expression =
+    ubExpression(
+      UnresolvedExtractValue(
+        allAttributeAnnotationsExpression(annotation),
+        Literal(attrName)
+      )
+    )
+
+  def lbExpression(e: Expression): Expression =
+    UnresolvedExtractValue(
+      e,
+      Literal(LOWER_BOUND_FIELD)
+    )
+
+  def bgAttrExpression(a: Attribute): Expression =
+    a //TODO do we want this to work like this?
+
+  def bgRowExpression(e: Expression): Expression =
+    UnresolvedExtractValue(
+      e,
+      Literal(BEST_GUESS_FIELD)
+    )
+
+  def ubExpression(e: Expression): Expression =
+    UnresolvedExtractValue(
+      e,
+      Literal(UPPER_BOUND_FIELD)
+    )
+
+
+
+}
