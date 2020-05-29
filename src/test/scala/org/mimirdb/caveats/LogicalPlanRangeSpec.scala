@@ -13,7 +13,8 @@ import org.mimirdb.test._
 
 class LogicalPlanRangeSpec
   extends Specification
-  with SharedSparkTestInstance
+    with SharedSparkTestInstance
+    with DataFrameMatchers
 {
   import spark.implicits._
 
@@ -30,17 +31,20 @@ class LogicalPlanRangeSpec
     return ret
   }
 
-  def annotEqualToDF(
+  def annotBagEqualToDF(
     input: DataFrame,
     expectedOutput: String,
     trace: Boolean = false
   ) : Boolean =
   {
-    val result = seqToBag(annotateSeq(input,trace))
-    bagOfRowsEquals(
-      result,
-      parseBag(expectedOutput)
-    ) must beTrue
+    val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+    if(trace){
+      println("------ FINAL ------")
+      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+      annotated.show(10,100)
+    }
+    annotated must beBagEqualsTo(expectedOutput)
   }
 
   def annotateBag[T](
@@ -216,7 +220,7 @@ class LogicalPlanRangeSpec
   }
 
   def parseBag(in: String): Map[((Int,Int,Int), Map[String,(String,String,String)]), Int] = {
-    val (header,data) = DataFramesSerializationParser.parseDF(in)
+    val (header,data) = DataFramesSerializationParser.parseDFasTable(in)
     val rowAnnPos = header.indexWhere( CaveatRangeEncoding.isRowAnnotationAttribute(_))
     var attributePos = header.indexWhere( x =>
       CaveatRangeEncoding.isAnnotationAttribute(x) &&
@@ -267,7 +271,7 @@ class LogicalPlanRangeSpec
     "Certain inputs" >> {
 
       "projections" >> {
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.select(),
 """
 +----------------+----------------+----------------+
@@ -282,10 +286,10 @@ class LogicalPlanRangeSpec
 |               1|               1|               1|
 +----------------+----------------+----------------+
 """
-  // , trace = true
+ // , trace = true
         )
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.select($"A"),
 """
 +---+----------------+----------------+----------------+--------------+--------------+
@@ -303,7 +307,7 @@ class LogicalPlanRangeSpec
   // , trace = true
         )
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.select((($"A" + $"B") * 2).as("X")),
 """
 +----+----------------+----------------+----------------+--------------+--------------+
@@ -321,7 +325,7 @@ class LogicalPlanRangeSpec
   // , trace = true
         )
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.select($"A", $"C"),
 """
 +---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
@@ -343,7 +347,7 @@ class LogicalPlanRangeSpec
 
       "filter" >> {
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.filter { $"A" =!= 1 and $"B" < $"C"},
 """
 +---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
@@ -355,7 +359,7 @@ class LogicalPlanRangeSpec
 //  , trace = true
         )
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.filter { $"A" =!= 1 },
 """
 +---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
@@ -372,7 +376,7 @@ class LogicalPlanRangeSpec
       }
 
       "joins" >> {
-        annotEqualToDF(
+        annotBagEqualToDF(
           dfr.select($"A", $"B").join(dfs.filter($"D" === 2), $"A" === $"D"),
 """
 +---+----+---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+
@@ -408,7 +412,7 @@ class LogicalPlanRangeSpec
     "TIP inputs" >> {
 
       "tableaccess" >> {
-        annotEqualToDF(
+        annotBagEqualToDF(
           dftip.uncertainToAnnotation(
             TupleIndependentProbabilisticDatabase("P"),
             CaveatRangeStrategy()
@@ -430,7 +434,7 @@ class LogicalPlanRangeSpec
 
       "filter" >> {
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dftip.uncertainToAnnotation(
             TupleIndependentProbabilisticDatabase("P"),
             CaveatRangeStrategy()
@@ -452,7 +456,7 @@ class LogicalPlanRangeSpec
 
       "joins" >> {
 
-        annotEqualToDF(
+        annotBagEqualToDF(
           dftip.uncertainToAnnotation(
             TupleIndependentProbabilisticDatabase("P"),
             CaveatRangeStrategy()
