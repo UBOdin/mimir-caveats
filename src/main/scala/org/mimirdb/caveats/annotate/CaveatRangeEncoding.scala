@@ -140,16 +140,16 @@ object CaveatRangeEncoding
   ): Seq[NamedExpression] =
     attributeAnnotationExpressions(a.name, annotation)
 
-  def rowLBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+  def rowLBexpression(annotation: String = ANNOTATION_ATTRIBUTE): NamedExpression =
     lbExpression(rowAnnotationExpressions(annotation))
 
-  def rowBGexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+  def rowBGexpression(annotation: String = ANNOTATION_ATTRIBUTE): NamedExpression =
     bgRowExpression(rowAnnotationExpressions(annotation))
 
-  def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
+  def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): NamedExpression =
     ubExpression(rowAnnotationExpressions(annotation))
 
-  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr =
+  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr[NamedExpression] =
     RangeBoundedExpr(
       rowLBexpression(annotation),
       rowBGexpression(annotation),
@@ -169,13 +169,13 @@ object CaveatRangeEncoding
   ): Expression =
     attributeAnnotationExpressions(attrName, annotation)(1)
 
-  def lbExpression(boundedExpr: Seq[Expression]): Expression =
+  def lbExpression(boundedExpr: Seq[NamedExpression]): NamedExpression =
     boundedExpr(0)
 
-  def bgRowExpression(boundedExpr: Seq[Expression]): Expression =
+  def bgRowExpression(boundedExpr: Seq[NamedExpression]): NamedExpression =
     boundedExpr(1)
 
-  def ubExpression(boundedExpr: Seq[Expression]): Expression =
+  def ubExpression(boundedExpr: Seq[NamedExpression]): NamedExpression =
     boundedExpr(2)
 
   def addAnnotPrefix(attr: String, suffix: String, prefix: String = ANNOTATION_ATTRIBUTE) = prefix + "_" + attr + "_" + suffix
@@ -270,7 +270,7 @@ object SingleAttributeCaveatRangeEncoding
   def rowUBexpression(annotation: String = ANNOTATION_ATTRIBUTE): Expression =
     ubExpression(rowAnnotationExpression(annotation))
 
-  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr =
+  def rowAnnotationExpressionTriple(annotation: String = ANNOTATION_ATTRIBUTE): RangeBoundedExpr[Expression] =
     RangeBoundedExpr(
       rowLBexpression(annotation),
       rowBGexpression(annotation),

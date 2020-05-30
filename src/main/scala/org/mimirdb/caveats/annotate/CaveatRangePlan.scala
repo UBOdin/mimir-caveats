@@ -15,6 +15,13 @@ import com.typesafe.scalalogging.LazyLogging
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.Constants._
 
+import org.mimirdb.spark.expressionLogic.{
+  wrapAgg,
+  isAggregate,
+  foldAnd,
+  foldOr
+}
+
 /**
   * Instrument a [LogicalPlan] to generate and propagate [CaveatRangeType] annotation.
   * In the result produced by the rewritten plan every row is annotated with a triple
@@ -162,7 +169,105 @@ class CaveatRangePlan()
 
       case Except(left: LogicalPlan, right: LogicalPlan, isAll: Boolean) =>
       {
-        ???
+        logrewr("EXCEPT")
+
+        val leftAbounds: Seq[RangeBoundedExpr[NamedExpression]] = CaveatRangeEncoding
+          .getNormalAttributesFromNamedExpressions(left.output)
+          .map(a => CaveatRangeExpression.apply(a)).map { case RangeBoundedExpr(l,b,u) =>
+            RangeBoundedExpr(
+              l.asInstanceOf[NamedExpression],
+              b.asInstanceOf[NamedExpression],
+              u.asInstanceOf[NamedExpression],
+            )
+          }
+        val leftNormalAttrs = leftAbounds.map( _.bg)
+        val leftRowBounds: RangeBoundedExpr[NamedExpression] = RangeBoundedExpr.fromSeq(CaveatRangeEncoding.rowAnnotationExpressions())
+        val rightPrefix = "__RIGHT_"
+        val rightAbounds = CaveatRangeEncoding
+          .getNormalAttributesFromNamedExpressions(right.output)
+          .map(a => CaveatRangeExpression.apply(UnresolvedAttribute(rightPrefix + a.name)))
+        val rightRowBounds = RangeBoundedExpr.fromSeq(CaveatRangeEncoding.rowAnnotationExpressions().map(
+          x => UnresolvedAttribute(rightPrefix + x.name)))
+
+        val rowAttrNames = CaveatRangeEncoding.rowAnnotationExpressions().map(x => x.name)
+
+        val rewrRight = tapply(right)
+        val renameRightProjects = rewrRight.output.map(
+          x =>
+          Alias(UnresolvedAttribute(x.name), rightPrefix + x.name)()
+        )
+
+        // rewritten children
+        val (rewrLeft,rewrRightRenamed) = (
+          combineBestGuess(tapply(left)),
+          Project(
+            renameRightProjects,
+            tapply(rewrRight)
+          )
+        )
+
+        // join on overlap
+        val joinCond = foldAnd(leftAbounds.zip(rightAbounds).map{ case (l,r) => l.overlaps(r) }:_*)
+        val join = Join(
+          rewrLeft,
+          rewrRightRenamed,
+          Inner,
+          Some(joinCond),
+          JoinHint.NONE
+        )
+
+        // check whether tuples match on best guess values
+        //
+        // row.lb = max(left.row.lb - sum(right.row.ub), 0)
+        // row.bg = max(left.row.bg - sum(if equal(l.bg,r.bg) right.row.bg else 0)
+        // row.ub = max(left.row.ub - sum(if iscertainlyequal(l,r) right.row.lb else 0)
+        //
+        val condBGmatch = foldAnd(leftAbounds.zip(rightAbounds).map { case (l,r) => EqualTo(l.bg,r.bg) }:_*)
+        val condCertainMatch = foldAnd(leftAbounds.zip(rightAbounds).map {
+          case (l,r) => l.certainlyEqualTo(r)
+        }:_*)
+
+        def subtractSumBounds(l: Expression, r: Expression, name: String): NamedExpression = {
+          Alias(Greatest(Seq(
+            Subtract(l,
+              wrapAgg(Sum(r))
+            ),
+            Literal(0))),
+            name
+          )(),
+        }
+
+        val rowBoundExprs: Seq[NamedExpression] = Seq(
+          subtractSumBounds(
+            leftRowBounds.lb,
+            rightRowBounds.ub,
+            rowAttrNames(0)),
+          subtractSumBounds(
+            leftRowBounds.bg,
+            CaseWhen(Seq((condBGmatch,rightRowBounds.ub)),Literal(0)),
+            rowAttrNames(1)),
+          subtractSumBounds(
+            leftRowBounds.ub,
+            CaseWhen(Seq((condCertainMatch,rightRowBounds.lb)),Literal(0)),
+            rowAttrNames(2))
+        )
+        val groupByExprs = leftNormalAttrs
+        val aggExprs = groupByExprs ++ rowBoundExprs
+
+        val agg = Aggregate(
+          groupByExprs,
+          aggExprs,
+          join
+        )
+
+        // final filter
+        val filter = Filter(
+          GreaterThan(UnresolvedAttribute(rowAttrNames(2)),Literal(0)),
+          agg
+        )
+
+        logop(filter)
+        filter
       }
 
       case Union(children: Seq[LogicalPlan]) =>
@@ -208,21 +313,23 @@ class CaveatRangePlan()
       //accordingly) then this may work, the attribute annotation on this column
       //would be the lowest and highest possible position of the tuple in sort
       //order
+      // the rewrite for other operators that are sensitive to sort order have to take this into account
       case Sort(order: Seq[SortOrder], global: Boolean, child: LogicalPlan) =>
       {
         ???
       }
 
-      case Range(
-          start: Long,
-          end: Long,
-          step: Long,
-          numSlices: Option[Int],
-          output: Seq[Attribute],
-          isStreaming: Boolean) =>
-      {
-        ???
-      }
+      // is a leaf node without any uncertainty
+      // case Range(
+      //     start: Long,
+      //     end: Long,
+      //     step: Long,
+      //     numSlices: Option[Int],
+      //     output: Seq[Attribute],
+      //     isStreaming: Boolean) =>
+      // {
+      //   ???
+      // }
 
       case Aggregate(
           groupingExpressions: Seq[Expression],
@@ -248,10 +355,35 @@ class CaveatRangePlan()
       {
         ???
       }
+
+
       case Expand(projections: Seq[Seq[Expression]], output: Seq[Attribute], child: LogicalPlan) =>
       {
-        ???
+        val rewrittenChild = tapply(child)
+        logrewr("EXPAND")
+        val annotation = projections.map { projectList =>
+          buildAnnotation(
+            rewrittenChild,
+            colAnnotations =
+              projectList.zip(output).map { case(e,a) =>
+                {
+                  val eB = CaveatRangeExpression(e)
+                  a.name -> eB
+                }
+              }
+          )
+        }
+        val newoutput = output ++ CaveatRangeEncoding.rowAnnotationExpressions().map (x => x.toAttribute) ++ CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(output).map( x => x.toAttribute)
+
+        val res = Expand(
+          projections.zip(annotation).map { case (proj,annot) => proj ++ annot },
+          newoutput,
+          rewrittenChild
+        )
+        logop(res)
+        res
       }
+
       case GroupingSets(
           selectedGroupByExprs: Seq[Seq[Expression]],
           groupByExprs: Seq[Expression],
@@ -269,6 +401,7 @@ class CaveatRangePlan()
       {
         ???
       }
+      //TODO limits needs to be aware of
       case GlobalLimit(limitExpr: Expression, child: LogicalPlan) =>
       {
         ???
@@ -279,8 +412,9 @@ class CaveatRangePlan()
       }
       case SubqueryAlias(identifier: AliasIdentifier, child: LogicalPlan) =>
       {
-        ???
+        PASS_THROUGH_CAVEATS
       }
+      // TODO not clear what the semantics of this should be. Can we just do a sample of the rewritten input as a sample of the output. Seems to ignore possible then
       case Sample(
           lowerBound: Double,
           upperBound: Double,
@@ -290,9 +424,15 @@ class CaveatRangePlan()
       {
         ???
       }
+      // needs be dealt with as an aggregation with only groupby, pass over to aggregation rewrite
       case Distinct(child: LogicalPlan) =>
       {
-        ???
+        tapply(Aggregate(
+          child.output,
+          child.output,
+          child
+        )
+        )
       }
       case Repartition(numPartitions: Int, shuffle: Boolean, child: LogicalPlan) =>
       {
@@ -305,10 +445,12 @@ class CaveatRangePlan()
       {
         ???
       }
-      case OneRowRelation() =>
-      {
-        ???
-      }
+      // a single row computed form expressions
+      // case OneRowRelation() =>
+      // {
+      //   // this is a dummy operator that does not do anything,
+      //   PASS_THROUGH_CAVEATS
+      // }
       case Deduplicate(keys: Seq[Attribute], child: LogicalPlan) =>
       {
         ???
@@ -323,7 +465,7 @@ class CaveatRangePlan()
             rowAnnotation = CaveatRangeExpression.neutralRowAnnotation(),
             colAnnotations =
               leaf.output.map { attr => { (attr.name,
-                RangeBoundedExpr.makeCertain(UnresolvedAttribute(attr.name))) }}
+                RangeBoundedExpr.makeCertain(UnresolvedAttribute(attr.name).asInstanceOf[Expression])) }}
           ),
           leaf
         )
@@ -438,7 +580,7 @@ class CaveatRangePlan()
         val rewrittenCondition = conditionBadapted.map(x => x.ub)
 
         // map join condition expression results to N (row annotation), if there is no join condition then return (1,1,1)
-        val annotConditionToRow: RangeBoundedExpr = conditionBadapted
+        val annotConditionToRow: RangeBoundedExpr[Expression] = conditionBadapted
           .map(CaveatRangeExpression.booleanToRowAnnotation)
           .getOrElse(CaveatRangeExpression.neutralRowAnnotation())
 
@@ -472,7 +614,7 @@ class CaveatRangePlan()
                 f(RIGHT_ANNOT_PREFIX)
               ),
               x
-            )
+            ).asInstanceOf[Expression]
           }
         )
 
@@ -490,7 +632,6 @@ class CaveatRangePlan()
           colAnnotations = colAnnotations
         )
 
-
         // calculate multiplicities
         Project(
           normalAttrs ++ annotations,
@@ -499,50 +640,39 @@ class CaveatRangePlan()
       }
     }
 
-  /** Group input based on best-guess values and merge row annotations.
+  /**
+    * Group input based on best-guess values and merge row annotations.
     *
     * @param plan input query
     * @returns root operator of the addtiional instrumentation added on top of the input plan
     */
   def combineBestGuess(plan: LogicalPlan): LogicalPlan = {
-    val inputAttrs = plan.output.filter( _.name != Constants.ANNOTATION_ATTRIBUTE ).map( x => x.name)
-    val groupBy = plan.output
-    val boundAggs = plan.output.map { a => CaveatRangeEncoding.attributeAnnotationExpressions(a.name) }
+    val inputAttrs = CaveatRangeEncoding.getNormalAttributesFromNamedExpressions(plan.output)
+    val groupBy = inputAttrs
+    // val boundAggs = plan.output.map { a => CaveatRangeEncoding.attributeAnnotationExpressions(a.name) }
+    val gbOutputs = inputAttrs.map( x => Alias(UnresolvedAttribute(x.name), x.name)() )
 
-    // sum up the tuple annotations
-    val boundFlatAttrs = Seq("__LB", "__BG", "__UB").map( x => Constants.ROW_FIELD + x )
-    val rowAnnotAggs : Seq[NamedExpression] =
-      CaveatRangeEncoding.rowAnnotationExpressionTriple()
-        .productIterator.toSeq.asInstanceOf[Seq[Expression]]
-        .zip(boundFlatAttrs).map {
-          x => x match { case (bound:Expression,name:String) => Alias(Sum(bound), name)() }
-        }
+    val rowAnnotAggs = CaveatRangeEncoding.rowAnnotationExpressions()
+      .map( x => Alias(wrapAgg(Sum(x)), x.name)())
 
-    // merge attribute bounds
-    val boundAttrFlatAttrs: Seq[String] = inputAttrs.map( x => { Seq("__LB", "__UB").map( y => x + y) }).flatten
-    val attrAnnotAggs = inputAttrs.map( x => CaveatRangeEncoding.attributeAnnotationExpressions(x) )
-      .map( x => Seq(Min(CaveatRangeEncoding.lbExpression(x)), Max(CaveatRangeEncoding.ubExpression(x))) : Seq[Expression] )
-      .flatten
-      .zip(boundAttrFlatAttrs)
-      .map(x => x match { case (bound:Expression,name:String) => Alias(bound, name)()  } )
-
-    val nestAnnotationAttr =
-      inputAttrs.map ( x => UnresolvedAttribute(x) )
-
-    // create aggregation for grouping and then renest into annotation attribute
-    constructAnnotUsingProject(
-      Aggregate(
-        groupBy,
-        groupBy ++ attrAnnotAggs ++ rowAnnotAggs,
-        plan
-      ),
-      boundFlatAttrs.map( x => UnresolvedAttribute(x) ) match { case Seq(lb,bg,ub) => RangeBoundedExpr(lb,bg,ub) },
-      inputAttrs.map( x =>
-        (x,
-        { Seq("__LB", "__UB").map( y => UnresolvedAttribute(x + y) ) } match { case Seq(a,b) => RangeBoundedExpr.fromBounds(a,b) }
-        )
+    val attrBoundAggs = inputAttrs.map { x =>
+      val name = x.name
+      val lb = CaveatRangeEncoding.attrLBexpression(name)
+      val ub = CaveatRangeEncoding.attrUBexpression(name)
+      val lbName = CaveatRangeEncoding.attributeAnnotationAttrName(name)(0)
+      val ubName = CaveatRangeEncoding.attributeAnnotationAttrName(name)(1)
+      Seq(
+        Alias(wrapAgg(Min(lb)), lbName)(),
+        Alias(wrapAgg(Max(ub)), ubName)()
       )
+    }.flatten
+
+    Aggregate(
+      inputAttrs,
+      inputAttrs ++ rowAnnotAggs ++ attrBoundAggs,
+      plan
     )
+
   }
 
   //TODO this should exist in standard lib?
@@ -568,19 +698,29 @@ class CaveatRangePlan()
 
   def constructAnnotUsingProject(
     plan: LogicalPlan,
-    rowAnnotation: RangeBoundedExpr = null,
-    colAnnotations: Seq[(String,RangeBoundedExpr)] = null,
+    rowAnnotation: RangeBoundedExpr[Expression] = null,
+    colAnnotations: Seq[(String,RangeBoundedExpr[Expression])] = null,
     projExprs: Seq[NamedExpression] = null,
-    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE)
+    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE,
+    outputAnnotationAttr: String = Constants.ANNOTATION_ATTRIBUTE
+  )
       : LogicalPlan =
   {
-    val pExprs = if (projExprs == null) { plan.output.filterNot( _.name == annotationAttr) } else projExprs
+    val pExprs =
+      if (projExprs == null) {
+        CaveatRangeEncoding.getNormalAttributesFromNamedExpressions(plan.output)
+      }
+      else projExprs
+
     Project(
-      pExprs ++ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr),
+      pExprs ++ buildAnnotation(plan, rowAnnotation, colAnnotations, annotationAttr, outputAnnotationAttr),
       plan
     )
   }
 
+  /**
+    * Rewrites for translating other representations of uncertainty into UAADBs.
+    */
   override def translateFromUncertaintyModel(plan: LogicalPlan, model: UncertaintyModel) =
     model match {
       case TupleIndependentProbabilisticDatabase(probAttr) => {
@@ -591,6 +731,13 @@ class CaveatRangePlan()
       }
     }
 
+  /**
+    * Translate TIP relation into RangeEncoding (probability as attribute P)
+    *  - All attributes are certain
+    *  - tuples are possible if P != 0
+    *  - tuples are best guess if P >= 0.5
+    *  - tuples are certain if P == 1.0
+    */
   def tipToRange(plan: LogicalPlan, probAttr: String): LogicalPlan = {
     assert(plan.output.exists(_.name == probAttr))
     val normalAttrs = CaveatRangeEncoding.getNormalAttributesFromNamedExpressions(
@@ -605,7 +752,7 @@ class CaveatRangePlan()
         Literal(1)
       ),
       colAnnotations = normalAttrNames
-        .map { a => a -> RangeBoundedExpr.makeCertain(UnresolvedAttribute(a)) },
+        .map { a => a -> RangeBoundedExpr.makeCertain(UnresolvedAttribute(a).asInstanceOf[Expression]) },
       projExprs = normalAttrs
     )
   }
@@ -624,9 +771,10 @@ class CaveatRangePlan()
    */
   def buildAnnotation(
     plan: LogicalPlan,
-    rowAnnotation: RangeBoundedExpr = null,
-    colAnnotations: Seq[(String, RangeBoundedExpr)] = null,
-    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE
+    rowAnnotation: RangeBoundedExpr[Expression] = null,
+    colAnnotations: Seq[(String, RangeBoundedExpr[Expression])] = null,
+    annotationAttr: String = Constants.ANNOTATION_ATTRIBUTE,
+    outputAnnotationAttr: String = Constants.ANNOTATION_ATTRIBUTE
   ): Seq[NamedExpression] =
   {
     val columns = plan.output
@@ -651,7 +799,14 @@ class CaveatRangePlan()
           Alias(x.ub, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(2))()
           )
         }}
-        .getOrElse { CaveatRangeEncoding.rowAnnotationExpressions(annotationAttr).map( x => selfProject(x)) }
+        .getOrElse {
+          if (annotationAttr == outputAnnotationAttr)
+            CaveatRangeEncoding.rowAnnotationExpressions(annotationAttr).map( x => selfProject(x))
+          else
+            CaveatRangeEncoding.rowAnnotationExpressions(annotationAttr).zip(
+              CaveatRangeEncoding.rowAnnotationExpressions(outputAnnotationAttr))
+          .map { case (in,out) => Alias(in, out.name)() }
+        }
 
     val realColAnnotations: Seq[NamedExpression] =
       Option(colAnnotations)
@@ -663,7 +818,16 @@ class CaveatRangePlan()
             )
           }
         }
-        .getOrElse { CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes) }
+        .getOrElse {
+          if (annotationAttr == outputAnnotationAttr)
+            CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes)
+          else
+            CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes,annotationAttr).zip(
+              CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes,outputAnnotationAttr))
+              .map { case (in,out) => Alias(in, out.name)() }
+        }
+
+    { CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes) }
 
     realRowAnnotations ++ realColAnnotations
   }

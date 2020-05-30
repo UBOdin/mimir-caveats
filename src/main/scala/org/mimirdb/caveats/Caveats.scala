@@ -17,6 +17,8 @@ import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
+import org.mimirdb.spark.sparkWorkarounds._
+
 /**
   * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
   * for a particular [AnnotationType].
@@ -63,11 +65,13 @@ object Caveats
       println(s"base schema: $baseSchema \n\nrow encoder $annotSchema")
     }
 
-    return new DataFrame(
-      execState.sparkSession,
-      annotated,
-      RowEncoder(annotSchema)
-    )
+    dataset.planToDF(annotated)
+
+    // return new DataFrame(
+    //   execState.sparkSession,
+    //   annotated,
+    //   RowEncoder(annotSchema)
+    // )
   }
 
   //TODO adapt to use new encoding-specific function

@@ -16,10 +16,10 @@ object DataFramesSerializationParser
       .split("[|]").map( x => x.trim())
   }
 
-  def parseDF(ser: String): DataFrame = {
+  def parseDF(ser: String, preserveNulls: Boolean = false): DataFrame = {
     val (schema, data) = parseDFasTable(ser)
     val sparkSchema = StructType(schema.map( name => StructField(name, StringType, true) ))
-    val sparkData = data.map( s => Row.fromSeq(s) )
+    val sparkData = data.map{ s => Row.fromSeq(s.map( x => if (preserveNulls && x.equals("null")) null else x)) }
     val df = spark.createDataFrame(
       spark.sparkContext.parallelize(sparkData),
       sparkSchema

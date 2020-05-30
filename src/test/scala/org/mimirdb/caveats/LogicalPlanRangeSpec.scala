@@ -2,13 +2,18 @@ package org.mimirdb.caveats
 
 import org.specs2.mutable.Specification
 
-import org.apache.log4j.{ Level, Logger }
-import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
-import org.apache.spark.sql.functions._
-import org.mimirdb.caveats.Constants._
-import org.mimirdb.caveats.implicits._
-import org.mimirdb.caveats.annotate._
 
+import org.apache.log4j.{ Level, Logger }
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
+
+import org.mimirdb.caveats.Constants._
+import org.mimirdb.caveats.annotate._
+import org.mimirdb.caveats.implicits._
+import org.mimirdb.spark.sparkWorkarounds._
 import org.mimirdb.test._
 
 class LogicalPlanRangeSpec
@@ -31,6 +36,27 @@ class LogicalPlanRangeSpec
     return ret
   }
 
+  def annotWithCombinerToDF(
+    input: DataFrame,
+    expectedOutput: String,
+    trace: Boolean = false
+  ) : Boolean =
+  {
+    val withCaveats = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+    val annotated = withCaveats.planToDF(
+      new CaveatRangePlan().combineBestGuess(withCaveats.plan),
+    )
+    if(trace){
+      println("------ FINAL ------")
+      println(annotated)
+      println(annotated.queryExecution)
+      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+      annotated.show(30,100)
+    }
+    annotated must beBagEqualsTo(expectedOutput)
+  }
+
   def annotBagEqualToDF(
     input: DataFrame,
     expectedOutput: String,
@@ -42,233 +68,269 @@ class LogicalPlanRangeSpec
       println("------ FINAL ------")
       println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
       println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
-      annotated.show(10,100)
+      annotated.show(30,100)
     }
     annotated must beBagEqualsTo(expectedOutput)
   }
 
-  def annotateBag[T](
+  def annotOrderedEqualToDF(
     input: DataFrame,
-    trace: Boolean = false,
-  )( op : Map[((Int, Int, Int), Map[String,(String, String, String)]), Int] => T) =
+    expectedOutput: String,
+    trace: Boolean = false
+  ) : Boolean =
   {
-    op(
-      seqToBag(annotateSeq(input,trace))
-    )
-  }
-
-  def annotate[T](
-    input: DataFrame,
-    trace: Boolean = false,
-  )( op : Seq[((Int, Int, Int), Map[String,(String, String, String)])] => T) =
-  {
-    op(
-      annotateSeq(input, trace)
-    )
-  }
-
-  def annotateSeq[T](
-    input: DataFrame,
-    trace: Boolean = false,
-  ): Seq[((Int, Int, Int), Map[String,(String, String, String)])] = {
     val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
     if(trace){
       println("------ FINAL ------")
       println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
       println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
-      annotated.show(10,100)
+      annotated.show(30,100)
     }
-      annotated
-       .collect()
-       .map { row =>
-         val attributes = CaveatRangeEncoding
-           .getNormalAttributesFromNamedExpressions(annotated.queryExecution.logical.output,
-             Constants.ANNOTATION_ATTRIBUTE)
-         if(trace){ println( "ROW: " + row ) }
-         (
-           (
-             row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(0)),
-             row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(1)),
-             row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(2)),
-           ),
-           attributes.map { _.name }
-                     .map { name =>
-                       // val r = attributes.getAs[Row](name)
-                       name ->
-                       (
-                         convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(0))),
-                         convertToString(row.getAs[String](name)),
-                         convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(1)))
-                       )
-                     }
-                     .toMap
-         )
-       }
+    annotated must beOrderedEqualsTo(expectedOutput)
   }
 
-  def convertToString(v: Any): String =
-    v match {
-      case x if x == null => "null"
-      case x:Int => Integer.toString(x)
-      case x:Double => Double.box(x).toString()
-      case x:Boolean => Boolean.box(x).toString()
-      case x:String => x
-      case x => x.toString()
-    }
 
-  def noAnnotate[T](
-    input: DataFrame,
-    trace: Boolean = false,
-  )( op : Seq[((Int, Int, Int), Map[String,(String, String)])] => T) =
-  {
-    val annotated = input
-    if(trace){
-      println("------ FINAL ------")
-      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
-      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
-      println(annotated)
-    }
-    op(
-      annotated
-       .collect()
-       .map { row =>
-         val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
-         val rowann = annotation.getAs[Row](ROW_FIELD)
-         val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
-         if(trace){ println( "ROW: "+row ) }
-         (
-           (
-             rowann.getAs[Int](LOWER_BOUND_FIELD),
-             rowann.getAs[Int](BEST_GUESS_FIELD),
-             rowann.getAs[Int](UPPER_BOUND_FIELD),
-           ),
-           attributes.schema
-                     .fields
-                     .map { _.name }
-                     .map { name =>
-                       val r = attributes.getAs[Row](name)
-                       name ->
-                       (
-                         r.getAs[String](LOWER_BOUND_FIELD),
-                         r.getAs[String](UPPER_BOUND_FIELD)
-                       )
-                     }
-                     .toMap
-         )
-       }
-    )
-  }
+  // def annotateBag[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Map[((Int, Int, Int), Map[String,(String, String, String)]), Int] => T) =
+  // {
+  //   op(
+  //     seqToBag(annotateSeq(input,trace))
+  //   )
+  // }
 
-  def ones(): (Int,Int,Int) = (1,1,1)
+  // def annotate[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Seq[((Int, Int, Int), Map[String,(String, String, String)])] => T) =
+  // {
+  //   op(
+  //     annotateSeq(input, trace)
+  //   )
+  // }
 
-  def repeat[T](el: T, cnt: Int): Seq[T] = {
-    (1 to cnt).map { x => el }
-  }
+  // def annotateSeq[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // ): Seq[((Int, Int, Int), Map[String,(String, String, String)])] = {
+  //   val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+  //   if(trace){
+  //     println("------ FINAL ------")
+  //     println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+  //     println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+  //     annotated.show(10,100)
+  //   }
+  //     annotated
+  //      .collect()
+  //      .map { row =>
+  //        val attributes = CaveatRangeEncoding
+  //          .getNormalAttributesFromNamedExpressions(annotated.queryExecution.logical.output,
+  //            Constants.ANNOTATION_ATTRIBUTE)
+  //        if(trace){ println( "ROW: " + row ) }
+  //        (
+  //          (
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(0)),
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(1)),
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(2)),
+  //          ),
+  //          attributes.map { _.name }
+  //                    .map { name =>
+  //                      // val r = attributes.getAs[Row](name)
+  //                      name ->
+  //                      (
+  //                        convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(0))),
+  //                        convertToString(row.getAs[String](name)),
+  //                        convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(1)))
+  //                      )
+  //                    }
+  //                    .toMap
+  //        )
+  //      }
+  // }
 
-  def triplicate[T](el: T): (T,T,T) = (el,el,el)
+  // def convertToString(v: Any): String =
+  //   v match {
+  //     case x if x == null => "null"
+  //     case x:Int => Integer.toString(x)
+  //     case x:Double => Double.box(x).toString()
+  //     case x:Boolean => Boolean.box(x).toString()
+  //     case x:String => x
+  //     case x => x.toString()
+  //   }
 
-  def tripleS[T](el: T): (String, String, String) =  (el.toString(), el.toString(), el.toString())
+  // def noAnnotate[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Seq[((Int, Int, Int), Map[String,(String, String)])] => T) =
+  // {
+  //   val annotated = input
+  //   if(trace){
+  //     println("------ FINAL ------")
+  //     println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+  //     println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+  //     println(annotated)
+  //   }
+  //   op(
+  //     annotated
+  //      .collect()
+  //      .map { row =>
+  //        val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
+  //        val rowann = annotation.getAs[Row](ROW_FIELD)
+  //        val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
+  //        if(trace){ println( "ROW: "+row ) }
+  //        (
+  //          (
+  //            rowann.getAs[Int](LOWER_BOUND_FIELD),
+  //            rowann.getAs[Int](BEST_GUESS_FIELD),
+  //            rowann.getAs[Int](UPPER_BOUND_FIELD),
+  //          ),
+  //          attributes.schema
+  //                    .fields
+  //                    .map { _.name }
+  //                    .map { name =>
+  //                      val r = attributes.getAs[Row](name)
+  //                      name ->
+  //                      (
+  //                        r.getAs[String](LOWER_BOUND_FIELD),
+  //                        r.getAs[String](UPPER_BOUND_FIELD)
+  //                      )
+  //                    }
+  //                    .toMap
+  //        )
+  //      }
+  //   )
+  // }
 
-  def toTripleStringSeq[T](in: T*): Seq[(String,String,String)] = in.map(x => if (x == null) (null,null,null) else tripleS(x))
+  // def ones(): (Int,Int,Int) = (1,1,1)
 
-  def toTripleStringBag[T](in: T*): Map[(String,String,String),Int] = seqToBag(in.map(x => if (x == null) ("null","null","null") else tripleS(x)))
+  // def repeat[T](el: T, cnt: Int): Seq[T] = {
+  //   (1 to cnt).map { x => el }
+  // }
 
-  def seqToBag[T](in: Seq[T]): Map[T,Int] = in.groupBy{ x => x }
-    .map { case (k, v) => k -> v.map( x => 1).reduce( (x,y) => x + y ) }
+  // def triplicate[T](el: T): (T,T,T) = (el,el,el)
 
-  def rann[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[(Int,Int,Int), Int] =
-    in.toSeq.map{ case (k,v) => k._1 -> v }
-      .groupBy{ case (k,v) => k }
-      .map{ case (k,v) => k -> v.map{ case(k,v) => v }.reduce( (x,y) => x + y) }
+  // def tripleS[T](el: T): (String, String, String) =  (el.toString(), el.toString(), el.toString())
 
-  def manOf[T: Manifest](t: T): Manifest[T] = manifest[T]
+  // def toTripleStringSeq[T](in: T*): Seq[(String,String,String)] = in.map(x => if (x == null) (null,null,null) else tripleS(x))
 
-  def bagOfRowsEquals(
-    l: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int],
-    r: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int]
-  ): Boolean = {
-    val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
-    if (!res) {
-      val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
-      val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
-      val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
-      println(s"Expected: $r")
-      println(s"Actual: $l")
-      println(s"Not equal annotations: $conflicting")
-      println(s"Only in excepted: $onlyRight")
-      println(s"Only in actual: $onlyLeft")
-    }
-    res
-  }
+  // def toTripleStringBag[T](in: T*): Map[(String,String,String),Int] = seqToBag(in.map(x => if (x == null) ("null","null","null") else tripleS(x)))
 
-  def bagEquals[T](l: Map[(T,T,T),Int], r: Map[(T,T,T),Int]): Boolean = {
-    val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
-    if (!res) {
-      val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
-      val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
-      val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
-      println("Left type: " + l.getClass + " and right type: " + r.getClass)
-      println("left types: " + l.map{ case (k,v) => k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
-      println("Right types: " + r.map{ case (k,v) => if (k._1 == null) "null" else k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
-      println(s"Expected: $r")
-      println(s"Actual: $l")
-      println(s"Conflicting values: $conflicting")
-      println(s"Only in excepted: $onlyRight")
-      println(s"Only in actual: $onlyLeft")
-    }
-    res
-  }
+  // def seqToBag[T](in: Seq[T]): Map[T,Int] = in.groupBy{ x => x }
+  //   .map { case (k, v) => k -> v.map( x => 1).reduce( (x,y) => x + y ) }
 
-  def parseBag(in: String): Map[((Int,Int,Int), Map[String,(String,String,String)]), Int] = {
-    val (header,data) = DataFramesSerializationParser.parseDFasTable(in)
-    val rowAnnPos = header.indexWhere( CaveatRangeEncoding.isRowAnnotationAttribute(_))
-    var attributePos = header.indexWhere( x =>
-      CaveatRangeEncoding.isAnnotationAttribute(x) &&
-      !CaveatRangeEncoding.isRowAnnotationAttribute(x)
-    )
-    if (attributePos == -1) {
-      attributePos = header.length
-    }
-    val normalAttributes = header.slice(0,rowAnnPos)
+  // def rann[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[(Int,Int,Int), Int] =
+  //   in.toSeq.map{ case (k,v) => k._1 -> v }
+  //     .groupBy{ case (k,v) => k }
+  //     .map{ case (k,v) => k -> v.map{ case(k,v) => v }.reduce( (x,y) => x + y) }
 
-    seqToBag(data.map
-      {
-        x => {
-          val normalAtts = x.slice(0,rowAnnPos)
-          val rowAtts = x.slice(rowAnnPos,attributePos).map( x => Integer.parseInt(x) )
-          val rangeAtts = x.slice(attributePos, x.length)
-          val attrMap = normalAttributes.map {
-            a => {
-              val pos = normalAttributes.indexOf(a)
-              val lbPos = 2 * pos
-              val ubPos = lbPos + 1
-              a -> (rangeAtts(lbPos), normalAtts(pos), rangeAtts(ubPos))
-            }
-          }.toMap
+  // def manOf[T: Manifest](t: T): Manifest[T] = manifest[T]
 
-          ((rowAtts(0), rowAtts(1), rowAtts(2)), attrMap)
-          }
-      }
-    )
-  }
+  // def bagOfRowsEquals(
+  //   l: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int],
+  //   r: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int]
+  // ): Boolean = {
+  //   val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
+  //   if (!res) {
+  //     val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
+  //     val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
+  //     val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
+  //     println(s"Expected: $r")
+  //     println(s"Actual: $l")
+  //     println(s"Not equal annotations: $conflicting")
+  //     println(s"Only in excepted: $onlyRight")
+  //     println(s"Only in actual: $onlyLeft")
+  //   }
+  //   res
+  // }
 
-  def attrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[Map[String,(T,T,T)], Int] = in.map{ case (k,v) => k._2 -> v }
+  // def bagEquals[T](l: Map[(T,T,T),Int], r: Map[(T,T,T),Int]): Boolean = {
+  //   val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
+  //   if (!res) {
+  //     val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
+  //     val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
+  //     val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
+  //     println("Left type: " + l.getClass + " and right type: " + r.getClass)
+  //     println("left types: " + l.map{ case (k,v) => k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
+  //     println("Right types: " + r.map{ case (k,v) => if (k._1 == null) "null" else k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
+  //     println(s"Expected: $r")
+  //     println(s"Actual: $l")
+  //     println(s"Conflicting values: $conflicting")
+  //     println(s"Only in excepted: $onlyRight")
+  //     println(s"Only in actual: $onlyLeft")
+  //   }
+  //   res
+  // }
 
-  def projectOnAttrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: Seq[String]): Map[Map[String,(T,T,T)], Int] = in.toSeq.map{
-    case (k,v)
-        =>
-      k._2.filter{ case (name,va) => a.contains(name) } -> v
-  }
-    .groupBy{ case (k,v) => k }
-    .map { case (k,v) => k -> v.map{ case (va, cnt) => cnt }.reduce( (x,y) => x + y) }
+  // def parseBag(in: String): Map[((Int,Int,Int), Map[String,(String,String,String)]), Int] = {
+  //   val (header,data) = DataFramesSerializationParser.parseDFasTable(in)
+  //   val rowAnnPos = header.indexWhere( CaveatRangeEncoding.isRowAnnotationAttribute(_))
+  //   var attributePos = header.indexWhere( x =>
+  //     CaveatRangeEncoding.isAnnotationAttribute(x) &&
+  //     !CaveatRangeEncoding.isRowAnnotationAttribute(x)
+  //   )
+  //   if (attributePos == -1) {
+  //     attributePos = header.length
+  //   }
+  //   val normalAttributes = header.slice(0,rowAnnPos)
 
-  def projectOneAttr[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: String): Map[(T,T,T), Int] = {
-    projectOnAttrs(in, Seq(a)).map{ case (k,v) => k(a) -> v }
-  }
+  //   seqToBag(data.map
+  //     {
+  //       x => {
+  //         val normalAtts = x.slice(0,rowAnnPos)
+  //         val rowAtts = x.slice(rowAnnPos,attributePos).map( x => Integer.parseInt(x) )
+  //         val rangeAtts = x.slice(attributePos, x.length)
+  //         val attrMap = normalAttributes.map {
+  //           a => {
+  //             val pos = normalAttributes.indexOf(a)
+  //             val lbPos = 2 * pos
+  //             val ubPos = lbPos + 1
+  //             a -> (rangeAtts(lbPos), normalAtts(pos), rangeAtts(ubPos))
+  //           }
+  //         }.toMap
+
+  //         ((rowAtts(0), rowAtts(1), rowAtts(2)), attrMap)
+  //         }
+  //     }
+  //   )
+  // }
+
+  // def attrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[Map[String,(T,T,T)], Int] = in.map{ case (k,v) => k._2 -> v }
+
+  // def projectOnAttrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: Seq[String]): Map[Map[String,(T,T,T)], Int] = in.toSeq.map{
+  //   case (k,v)
+  //       =>
+  //     k._2.filter{ case (name,va) => a.contains(name) } -> v
+  // }
+  //   .groupBy{ case (k,v) => k }
+  //   .map { case (k,v) => k -> v.map{ case (va, cnt) => cnt }.reduce( (x,y) => x + y) }
+
+  // def projectOneAttr[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: String): Map[(T,T,T), Int] = {
+  //   projectOnAttrs(in, Seq(a)).map{ case (k,v) => k(a) -> v }
+  // }
 
   "DataFrame Range Annotations" >> {
 
     "Certain inputs" >> {
+
+      "constant tuple" >> {
+        annotBagEqualToDF(
+          dfr.planToDF(
+            Project(
+              Seq(Alias(Literal(1),"A")(), Alias(Literal(2),"B")()),
+              OneRowRelation()
+            ),
+          ),
+"""
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|  B|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|  2|               1|               1|               1|             1|             1|             2|             2|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
+      }
 
       "projections" >> {
         annotBagEqualToDF(
@@ -343,6 +405,21 @@ class LogicalPlanRangeSpec
 // , trace = true
         )
 
+        annotBagEqualToDF(
+          dfr.select($"A", $"C", when($"C" === 1, $"A").otherwise($"C").as("X")),
+"""
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|  B|  X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  1|  2|  2|               1|               1|               1|             1|             1|             2|             2|             2|             2|
+|  1|  3|  3|               0|               1|               1|             1|             1|             3|             3|             3|             3|
+|  2|  1|  2|               0|               1|               1|             2|             2|             1|             1|             2|             2|
+|  3|  3|  3|               0|               0|               1|             3|             3|             3|             3|             3|             3|
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
+
       }
 
       "filter" >> {
@@ -374,6 +451,35 @@ class LogicalPlanRangeSpec
         )
 
       }
+
+      "union" >> {
+
+        annotBagEqualToDF(
+          dfr.select($"A").union(dfr.select($"B")),
+"""
++----+----------------+----------------+----------------+--------------+--------------+
+|   A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++----+----------------+----------------+----------------+--------------+--------------+
+|   1|               1|               1|               1|             1|             1|
+|   1|               1|               1|               1|             1|             1|
+|   2|               1|               1|               1|             2|             2|
+|   1|               1|               1|               1|             1|             1|
+|   1|               1|               1|               1|             1|             1|
+|   2|               1|               1|               1|             2|             2|
+|   4|               1|               1|               1|             4|             4|
+|   2|               1|               1|               1|             2|             2|
+|   3|               1|               1|               1|             3|             3|
+|null|               1|               1|               1|          null|          null|
+|   2|               1|               1|               1|             2|             2|
+|   4|               1|               1|               1|             4|             4|
+|   2|               1|               1|               1|             2|             2|
+|   2|               1|               1|               1|             2|             2|
++----+----------------+----------------+----------------+--------------+--------------+
+"""
+  , trace = true
+        )
+      }
+
 
       "joins" >> {
         annotBagEqualToDF(
@@ -432,6 +538,31 @@ class LogicalPlanRangeSpec
         )
       }
 
+      "projections" >> {
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+             // , trace = true
+          ).select($"A", $"B", when($"B" === 1, $"A").otherwise($"B").as("X")),
+"""
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|   C|   X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_C_LB|__CAVEATS_C_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  1|   3|   3|               1|               1|               1|             1|             1|             3|             3|             3|             3|
+|  1|   1|   1|               1|               1|               1|             1|             1|             1|             1|             1|             1|
+|  2|   1|   2|               1|               1|               1|             2|             2|             1|             1|             2|             2|
+|  1|null|null|               1|               1|               1|             1|             1|          null|          null|             1|             1|
+|  1|   2|   2|               1|               1|               1|             1|             1|             2|             2|             2|             2|
+|  2|   1|   2|               1|               1|               1|             2|             2|             1|             1|             2|             2|
+|  4|   4|   4|               1|               1|               1|             4|             4|             4|             4|             4|             4|
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
+
+      }
+
       "filter" >> {
 
         annotBagEqualToDF(
@@ -452,6 +583,74 @@ class LogicalPlanRangeSpec
        //     , trace = true
         )
 
+      }
+
+      "union" >> {
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               1|               1|             1|             1|
+|  1|               0|               1|               1|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
+        )
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+            ).select($"B"))
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+            ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               1|               1|             1|             1|
+|  1|               0|               1|               1|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
+        )
       }
 
       "joins" >> {
@@ -486,6 +685,51 @@ class LogicalPlanRangeSpec
         )
 
       }
+
+      "best guess combiner" >> {
+
+        annotWithCombinerToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A"),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               2|               2|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
+        )
+
+        annotWithCombinerToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               3|               3|             1|             1|
+|  2|               1|               2|               2|             2|             2|
+|  3|               0|               1|               3|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+ // , trace = true
+        )
+      }
+
 
     }
 

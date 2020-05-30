@@ -6,12 +6,12 @@ import org.apache.spark.sql.types._
 
 object expressionLogic
 {
-  def attributesOfExpression(e: Expression):Set[Attribute] = 
+  def attributesOfExpression(e: Expression):Set[Attribute] =
   {
     e.collect[Attribute] { case a: Attribute => a }.toSet
   }
 
-  def negate(e: Expression): Expression = 
+  def negate(e: Expression): Expression =
     e match {
       case Not(n) => n
       case Or(l, r) => And(negate(l), negate(r))
@@ -21,14 +21,14 @@ object expressionLogic
     }
   def foldOr(e:Expression*) = fold(e, true)
   def foldAnd(e:Expression*) = fold(e, false)
-  def foldIf(i:Expression)(t: Expression)(e: Expression) = 
+  def foldIf(i:Expression)(t: Expression)(e: Expression) =
     e match {
       case Literal(true, BooleanType) => t
       case Literal(false, BooleanType) => e
       case _ => If(i, t, e)
     }
 
-  def aggregateBoolOr(e:Expression) = 
+  def aggregateBoolOr(e:Expression) =
     e match {
       case Literal(false, BooleanType) => Literal(false)
       case _ => //BoolOr("bool_or", e)
@@ -43,12 +43,21 @@ object expressionLogic
         )
     }
 
+  def wrapAgg(e: AggregateFunction, distinct: Boolean = false) = {
+    AggregateExpression(
+      e,
+      Complete,
+      distinct,
+      NamedExpression.newExprId
+    )
+  }
+
   def inline(e: Expression, projectionList: Seq[NamedExpression]): Expression =
     inline(e, projectionList.map { expr => expr.name -> expr }.toMap)
 
   def inline(e: Expression, replacements: Map[String,Expression]): Expression =
   {
-    e match { 
+    e match {
       case a:Attribute => replacements(a.name)
       case _ => e.mapChildren { inline(_, replacements) }
     }
@@ -56,14 +65,14 @@ object expressionLogic
 
   def isAggregate(e: Expression): Boolean =
   {
-    e match { 
+    e match {
       case _:AggregateExpression => true
       case _ => e.children.exists { isAggregate(_) }
     }
   }
 
   private def fold(
-    conditions: Seq[Expression], 
+    conditions: Seq[Expression],
     disjunctive: Boolean = true
   ): Expression =
     conditions.filter { !_.equals(Literal(!disjunctive)) } match {
@@ -77,7 +86,7 @@ object expressionLogic
       case c if c.exists { _.equals(Literal(disjunctive)) } => Literal(disjunctive)
 
       // Multiple potential caveats
-      case c => 
+      case c =>
         val op = (if(disjunctive) { Or(_,_) } else { And(_,_) })
         c.tail.foldLeft(c.head) { op(_,_) }
     }

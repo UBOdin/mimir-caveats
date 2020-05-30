@@ -13,33 +13,44 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.boundedtypes._
 
-case class RangeBoundedExpr(lb: Expression, bg: Expression, ub: Expression)
-{
-  def toTuple(): (Expression,Expression,Expression) = (lb,bg,ub)
-  def toSeq(): Seq[Expression] = Seq(lb,bg,ub)
-  def map(f: Expression => Expression): RangeBoundedExpr = RangeBoundedExpr(f(lb), f(bg), f(ub))
-  def zip[B](s: Seq[B]): Seq[(Expression,B)] = this.toSeq().zip(s)
+import org.mimirdb.spark.expressionLogic._
 
-  def applyIndividuallyToBounds(flb: RangeBoundedExpr => Expression,
-    fbg: RangeBoundedExpr => Expression,
-    fub: RangeBoundedExpr => Expression)
-      : RangeBoundedExpr =
+case class RangeBoundedExpr[T <: Expression](lb: T, bg: T, ub: T)
+{
+  def toTuple(): (T,T,T) = (lb,bg,ub)
+  def toSeq(): Seq[T] = Seq(lb,bg,ub)
+  def map[S <: Expression](f: T => S): RangeBoundedExpr[S] = RangeBoundedExpr(f(lb), f(bg), f(ub))
+  def zip[B](s: Seq[B]): Seq[(T,B)] = this.toSeq().zip(s)
+
+  def applyIndividuallyToBounds[S <: Expression](flb: RangeBoundedExpr[T] => S,
+    fbg: RangeBoundedExpr[T] => S,
+    fub: RangeBoundedExpr[T] => S)
+      : RangeBoundedExpr[S] =
     RangeBoundedExpr(flb(this), fbg(this), fub(this))
 
-  def applyIndividually(flb: Expression => Expression,
-    fbg: Expression => Expression,
-    fub: Expression => Expression)
-      : RangeBoundedExpr =
+  def applyIndividually[S <: Expression](flb: T => S,
+    fbg: T => S,
+    fub: T => S)
+      : RangeBoundedExpr[S] =
     RangeBoundedExpr(flb(lb), fbg(bg), fub(ub))
+
+  def overlaps(r: RangeBoundedExpr[Expression]): Expression =
+    And(LessThanOrEqual(lb,r.ub),LessThanOrEqual(r.lb,ub))
+
+  def isCertain(): Expression = EqualTo(lb,ub)
+
+  def certainlyEqualTo(r: RangeBoundedExpr[Expression]): Expression =
+    foldAnd(isCertain(),r.isCertain(),EqualTo(lb,r.lb))
+
 }
 
 object RangeBoundedExpr
 {
 
-  def makeCertain(e: Expression): RangeBoundedExpr = RangeBoundedExpr(e,e,e)
-  def fromBounds(lb: Expression, ub: Expression): RangeBoundedExpr = RangeBoundedExpr(lb,Literal(1),ub)
-  def fromTuple(t: (Expression,Expression,Expression)): RangeBoundedExpr = RangeBoundedExpr(t._1,t._2,t._3)
-  def fromSeq(s: Seq[Expression]): RangeBoundedExpr = {
+  def makeCertain[T <: Expression](e: T): RangeBoundedExpr[T] = RangeBoundedExpr[T](e,e,e)
+  def fromBounds[T <: Expression](lb: T, ub: T): RangeBoundedExpr[Expression] = RangeBoundedExpr(lb,Literal(1),ub)
+  def fromTuple[T <: Expression](t: (T,T,T)): RangeBoundedExpr[T] = RangeBoundedExpr(t._1,t._2,t._3)
+  def fromSeq[T <: Expression](s: Seq[T]): RangeBoundedExpr[T] = {
     //TODO check length
     assert(s.length == 3)
     RangeBoundedExpr(s(0),s(1),s(2))
@@ -86,7 +97,7 @@ object CaveatRangeExpression
    * @param   expr  The expression to calculate bounds for
    * @return        A triple of expressions that computes lower, best guess, and upper bounds of the value of the input expression
    **/
-  def apply(expr: Expression): RangeBoundedExpr =
+  def apply[T <: Expression](expr: T): RangeBoundedExpr[Expression] =
   {
     // Derive a set of conditions under which  the input expression will be
     // caveatted.  By default, this occurs whenever a caveat is present or when
@@ -208,7 +219,7 @@ object CaveatRangeExpression
   }
 
   // lift to (lub,rlb) and (llb,rub)
-  def liftOrderComparison(op: BinaryExpression) : RangeBoundedExpr = {
+  def liftOrderComparison(op: BinaryExpression) : RangeBoundedExpr[Expression] = {
     val (left,right) = (op.children(0), op.children(1))
     val l = apply(left)
     val r = apply(right)
@@ -221,14 +232,14 @@ object CaveatRangeExpression
   }
 
   //TODO should not duplicate names!
-  def preserveName(expr: NamedExpression): RangeBoundedExpr =
+  def preserveName(expr: NamedExpression): RangeBoundedExpr[NamedExpression] =
   {
     val e = apply(expr)
     RangeBoundedExpr(Alias(e.lb, expr.name)(), Alias(e.bg, expr.name)(), Alias(e.ub, expr.name)())
   }
 
   // map a triple of boooleans into a triple of Int (Row annotations)
-  def booleanToRowAnnotation(cond: RangeBoundedExpr): RangeBoundedExpr =
+  def booleanToRowAnnotation(cond: RangeBoundedExpr[Expression]): RangeBoundedExpr[Expression] =
     cond.map(boolToInt)
 
   // replace references to attribute bounds annotations based on a mapping from attribute to annotation attribute
@@ -263,7 +274,7 @@ object CaveatRangeExpression
     If(EqualTo(bool, Literal(true)), Literal(1), Literal(0))
   }
 
-  def neutralRowAnnotation(): RangeBoundedExpr = RangeBoundedExpr.makeCertain(Literal(1))
+  def neutralRowAnnotation(): RangeBoundedExpr[Expression] = RangeBoundedExpr.makeCertain(Literal(1))
 
   // recursive function to deal with CASE WHEN clauses. For CASE WHEN (p1 o1) (p2 o2) ... e,
   // we calculate the lower bound (symmetrically the upper bound) as
@@ -271,7 +282,7 @@ object CaveatRangeExpression
   //           (certainfalse(p1) (CASE WHEN (certaintrue(p2) LB(o2))
   //                              ...
   //           least(LB(o1), (CASE WHEN (certaintrue(p2) ...
-  private def whenCases(when: CaseWhen): RangeBoundedExpr =
+  private def whenCases(when: CaseWhen): RangeBoundedExpr[Expression] =
     when match {
       case CaseWhen(Seq(), None) => null
       // a single when then clause
@@ -330,7 +341,7 @@ object CaveatRangeExpression
 
   // calculate bounds as the min/max over all combinations of applying the
   // operator to lower/upper bound of left and right input
-  private def minMaxAcrossAllCombinations(e: BinaryExpression): RangeBoundedExpr = {
+  private def minMaxAcrossAllCombinations(e: BinaryExpression): RangeBoundedExpr[Expression] = {
     val (left,right) = (e.children(0), e.children(1))
     val l = apply(left)
     val r = apply(right)
@@ -342,11 +353,11 @@ object CaveatRangeExpression
     )
   }
 
-  private def isCertainTrue(e: RangeBoundedExpr): Expression = {
+  private def isCertainTrue(e: RangeBoundedExpr[Expression]): Expression = {
     e.lb
   }
 
-  private def isCertainFalse(e: RangeBoundedExpr): Expression = {
+  private def isCertainFalse(e: RangeBoundedExpr[Expression]): Expression = {
     negate(e.ub)
   }
 
@@ -369,7 +380,7 @@ object CaveatRangeExpression
   //   )
   // }
 
-  def liftPointwise(e:Expression): RangeBoundedExpr =
+  def liftPointwise(e:Expression): RangeBoundedExpr[Expression] =
   {
       val caveatedChildren = e.children.map { apply(_) }
       RangeBoundedExpr(e.withNewChildren(caveatedChildren.map(x => x.lb)),

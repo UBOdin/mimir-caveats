@@ -120,7 +120,7 @@ or test for the presence of a caveat in the set with `isEmpty`.
 |                Generate | ✓              |                | ✓           |
 |                  Filter | ✓              | ✓              | ✓           |
 |               Intersect |                |                |             |
-|                  Except |                |                |             |
+|                  Except |                | ✓              |             |
 |                   Union | ✓              | ✓              | ✓           |
 |                    Join | ✓ (inner)      | ✓ (inner)      | ✓           |
 |           InsertIntoDir | ✓              |                | ✓           |
@@ -128,10 +128,10 @@ or test for the presence of a caveat in the set with `isEmpty`.
 |                    With |                |                |             |
 |    WithWindowDefinition |                |                |             |
 |                    Sort | ✓              |                | ✓           |
-|                   Range | ✓              |                |             |
+|                   Range | ✓              | ✓              |             |
 |               Aggregate | ✓              |                | ✓           |
 |                  Window |                |                |             |
-|                  Expand |                |                |             |
+|                  Expand |                | ✓              |             |
 |            GroupingSets |                |                |             |
 |                   Pivot |                |                |             |
 |             GlobalLimit | ✓              |                | ✓           |

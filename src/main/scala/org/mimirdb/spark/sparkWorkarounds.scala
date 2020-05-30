@@ -1,7 +1,7 @@
 package org.mimirdb.spark
 
 import org.apache.commons.lang3.StringUtils
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession }
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -22,7 +22,17 @@ class DataFrameImplicits(df:DataFrame)
     new DataFrame(df.sparkSession, plan, RowEncoder(plan.schema))
   }
 
-  def plan = df.queryExecution.logical
+  def plan = df.queryExecution.analyzed
+
+  /**
+    *  Creates a dataframe from a logical plan and calls the analyzer if necessary to ensure that we have a valid row encoder. This safes us from always having to create the result schema (including correct datatypes manually.
+    */
+  def planToDF(logicalPlan: LogicalPlan): DataFrame = {
+    df.sparkSession
+    val qe = df.sparkSession.sessionState.executePlan(logicalPlan)
+    qe.assertAnalyzed()
+    new DataFrame(df.sparkSession, logicalPlan, RowEncoder(qe.analyzed.schema))
+  }
 
   /**
     * copied useful private methods and made them available under different name for our convenience.
@@ -117,16 +127,17 @@ class DataFrameImplicits(df:DataFrame)
   }
 
   def castValuesAsStrings(): DataFrame  = {
-    val castCols = df.queryExecution.logical.output.map { col =>
-      // Since binary types in top-level schema fields have a specific format to print,
-      // so we do not cast them to strings here.
-      if (col.dataType == BinaryType) {
-        new Column(col)
-      } else {
-        new Column(col).cast(StringType)
-      }
-    }
-    df.select(castCols: _*)
+    SparkHelpers.castDFValuesAsStrings(df)
+    // val castCols = df.queryExecution.logical.output.map { col =>
+    //   // Since binary types in top-level schema fields have a specific format to print,
+    //   // so we do not cast them to strings here.
+    //   if (col.dataType == BinaryType) {
+    //     new Column(col)
+    //   } else {
+    //     new Column(col).cast(StringType)
+    //   }
+    // }
+    // df.select(castCols: _*)
   }
 
   def getStringRows(
@@ -165,6 +176,13 @@ object sparkWorkarounds
 
 object SparkHelpers
 {
+
+  def planToDF(plan: LogicalPlan, sparkSession: SparkSession): DataFrame = {
+    val qe = sparkSession.sessionState.executePlan(plan)
+    qe.assertAnalyzed()
+    new DataFrame(sparkSession, plan, RowEncoder(qe.analyzed.schema))
+  }
+
   def castDFValuesAsStrings(df: DataFrame): DataFrame  = {
     val castCols = df.queryExecution.analyzed.output.map { col =>
       // Since binary types in top-level schema fields have a specific format to print,
