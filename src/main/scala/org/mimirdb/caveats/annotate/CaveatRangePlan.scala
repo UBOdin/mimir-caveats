@@ -336,15 +336,78 @@ class CaveatRangePlan()
           aggregateExpressions: Seq[NamedExpression],
           child: LogicalPlan) =>
         {
-          /*
-          A classical aggregate.
+          val rewrittenChild = tapply(child)
+          // group by expressions  and their bounds
+          val groupingBoundsGrps = groupingExpressions
+          val groupingBnds = groupingExpressions.map ( e => CaveatRangeExpression(e) )
+          val resultRangeNames = aggregateExpressions.map ( e => CaveatRangeEncoding.attributeRangeBoundedExpr(e.name) )
 
-          Something to note here is that groupingExpressions is only used to
-          define the set of group-by attributes.  aggregateExpressions is the
-          actual projection list, and may include fragments to be evaluated both
-          pre- and post-aggregate.
-         */
-        ???
+          // renamed grouping attributes
+          val groupByNames = Array.range(1,groupingExpressions.length)
+            .map(i => "__GROUPBY_" + i.toString())
+            .map( a => CaveatRangeEncoding.attributeAnnotationAttrName(a))
+          val groupByAttrBnds = groupByNames.map { a => CaveatRangeEncoding.attributeRangeBoundedExpr(a(1)) }
+          val groupingMerge = groupingBnds.zip(groupByNames).map { case (re,name) =>
+            RangeBoundedExpr(
+              Alias(wrapAgg(Max(re.lb)),name(0))(),
+              Alias(re.bg,name(1))(),
+              Alias(wrapAgg(Max(re.ub)),name(2))()
+            )
+          }
+          val groupAttrPairs = groupByAttrBnds.zip(groupingBnds)
+
+          // group on group-by attributes and merge bounds of group attributes for all tuples with same group-by values
+          val groupingMergeGrp = groupingMerge.map( _.bg)
+          val groupingMergeAggs = groupingMerge.map( x => Seq(x.lb, x.ub)).flatten
+
+          val mergeGroupBounds = Aggregate(
+            groupingMergeGrp,
+            groupingMergeGrp ++ groupingMergeAggs,
+            rewrittenChild
+          )
+
+          // join grouping bounds with input
+          val joinCond = foldAnd(groupAttrPairs.map { case (newg, g) => newg.overlaps(g) }:_*)
+          val join = Join(
+            mergeGroupBounds,
+            rewrittenChild,
+            Inner,
+            Some(joinCond),
+            JoinHint.NONE
+          )
+
+          // rewritten aggregation that calculates aggrgeation function result bounds
+          val rowAnnotAtts = CaveatRangeEncoding.rowAnnotationExpressions().zip(
+            CaveatRangeEncoding.rowAnnotationAttrNames()
+          )
+          val certainEqual = foldAnd(groupAttrPairs.map { case (l,r) => l.certainlyEqualTo(r) }:_*)
+          val bgEqual = foldAnd(groupAttrPairs.map { case (l,r) => l.bgEqualTo(r) }:_*)
+          val rowAnnots = RangeBoundedExpr(
+            Alias(
+              wrapAgg(Max(CaseWhen(Seq((certainEqual,Literal(1))),Literal(0)))),
+              rowAnnotAtts(0)._2
+            )(),
+            Alias(
+              wrapAgg(Max(CaseWhen(Seq((bgEqual,Literal(1))),Literal(0)))),
+              rowAnnotAtts(1)._2
+            )(),
+            Alias(
+              wrapAgg(Sum(rowAnnotAtts(2)._1)),
+              rowAnnotAtts(2)._2
+            )()
+          )
+          val groupByExprs = groupByAttrBnds.map( _.toSeq).flatten
+          val resultBounds = rowAnnots.toSeq ++ aggregateExpressions
+            .map(CaveatRangeExpression(_))
+            .map( x => x.asInstanceOf[RangeBoundedExpr[NamedExpression]].toSeq())
+            .flatten
+          val agg = Aggregate(
+            groupByExprs,
+            aggregateExpressions ++ resultBounds,
+            join
+          )
+          logop(agg)
+          agg
       }
       // for window operators we face the same challenge as for sort, we have to provide bounds for the aggregation function across all possible windows (partition + sort order)
       case Window(
@@ -567,7 +630,7 @@ class CaveatRangePlan()
         ).toMap
 
         // rewrite condition
-        val conditionB = condition.map(CaveatRangeExpression.apply)
+        val conditionB = condition.map(CaveatRangeExpression.applynogrp)
 
         // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
         val conditionBadapted = conditionB.map( x => RangeBoundedExpr(

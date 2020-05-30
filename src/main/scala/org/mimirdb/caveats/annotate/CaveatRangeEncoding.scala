@@ -126,6 +126,16 @@ object CaveatRangeEncoding
       UnresolvedAttribute(addAnnotPrefix(attrName, UPPER_BOUND_FIELD, annotation))
     )
 
+  def attributeRangeBoundedExpr(
+    attrName: String,
+    annotation: String = ANNOTATION_ATTRIBUTE
+  ): RangeBoundedExpr[NamedExpression] =
+    RangeBoundedExpr(
+      attributeAnnotationExpressions(attrName, annotation)(0),
+      UnresolvedAttribute(attrName),
+      attributeAnnotationExpressions(attrName, annotation)(2)
+    )
+
   def attributeAnnotationAttrName(
     attrName: String,
     annotation: String = ANNOTATION_ATTRIBUTE
