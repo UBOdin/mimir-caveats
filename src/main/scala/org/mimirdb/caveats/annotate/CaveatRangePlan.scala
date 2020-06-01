@@ -36,6 +36,8 @@ class CaveatRangePlan()
   with LazyLogging
 {
 
+  def renameExpr(e:Expression, name:String): NamedExpression = CaveatRangeExpression.renameExpr(e,name)
+
   def outputEncoding = CaveatRangeEncoding
 
   def annotationType = CaveatRangeType
@@ -336,40 +338,107 @@ class CaveatRangePlan()
           aggregateExpressions: Seq[NamedExpression],
           child: LogicalPlan) =>
         {
+          /**
+            * Search for group-by expressions in an aggregation result
+            * expression and replace them with references to renamed group-by
+            * attributes.
+            */
+          def replaceGroupByInExpression(e: Expression, replacement: Map[Expression,Expression]): Expression = {
+            e match {
+              case x:AggregateExpression => e
+              case x:AggregateFunction => e
+              case _ => {
+                if(replacement.contains(e))
+                  replacement(e)
+                else
+                  e.withNewChildren(e.children.map(replaceGroupByInExpression(_, replacement)))
+              }
+            }
+          }
+
+          // groupby qggregation?
+          val isGroupby = !groupingExpressions.isEmpty
+
+          // rewrite child
           val rewrittenChild = tapply(child)
-          // group by expressions  and their bounds
-          val groupingBoundsGrps = groupingExpressions
-          val groupingBnds = groupingExpressions.map ( e => CaveatRangeExpression(e) )
+
+          // result attribute names (including attributes encoding bounds)
           val resultRangeNames = aggregateExpressions.map ( e => CaveatRangeEncoding.attributeRangeBoundedExpr(e.name) )
 
+          // for aggregation without group-by we do not need to determine group bounds which simplifies the rewrite
+          if (!isGroupby) {
+            val rowAnnots =  RangeBoundedExpr
+              .makeCertain(Literal(1))
+              .rename(CaveatRangeEncoding.rowAnnotationAttrNames())
+            val resultExprs = aggregateExpressions
+              .map(CaveatRangeExpression(_))
+              .zip(resultRangeNames)
+              .map{ case (exprs,names) =>
+                exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => renameExpr(expr, name.name))
+              }.asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
+            val resultBestGuess = resultExprs.map(_.bg)
+            val resultAttrBounds = resultExprs.map( x=> Seq(x.lb,x.ub) ).flatten
+
+            val agg = Aggregate(
+              groupingExpressions,
+              resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds,
+              rewrittenChild
+            )
+            logop(agg)
+            return agg
+          }
+
+          /* Group by expressions and their bounds. We have relatively free choice of how
+           * to group range-annotated inputs to output groups. We create one
+           * output tuple for each best-guess group (group that exists as the
+           * best guess value of some input tuple). All inputs are assigned to
+           * an output based on their best guess group-by values. The ranges of
+           * the group-by attributes of an output are determined by merging the
+           * bounds of all inputs assigned to an output. We realize this by fist
+           * calculating the set of outputs and their group-by bounds using
+           * aggregation grouping on the best guess group-by values of tuples
+           * and calculating the min/max of the lower/upper bounds of the
+           * group-by values of all tuples belonging to the same BG group.
+           */
+          val groupingBoundsGrps = groupingExpressions
+          val groupingBnds = groupingExpressions.map ( e => CaveatRangeExpression(e) )
+
           // renamed grouping attributes
-          val groupByNames = Array.range(1,groupingExpressions.length)
+          val renamedGroupByNames = Array.range(0,groupingExpressions.length)
             .map(i => "__GROUPBY_" + i.toString())
-            .map( a => CaveatRangeEncoding.attributeAnnotationAttrName(a))
-          val groupByAttrBnds = groupByNames.map { a => CaveatRangeEncoding.attributeRangeBoundedExpr(a(1)) }
-          val groupingMerge = groupingBnds.zip(groupByNames).map { case (re,name) =>
+            .map( a => {
+              val bnds = CaveatRangeEncoding.attributeAnnotationAttrName(a)
+              Seq(bnds(0), a, bnds(1))
+            }
+            )
+
+          val renamedGroupByBoundNames = renamedGroupByNames.map { a => CaveatRangeEncoding.attributeRangeBoundedExpr(a(1)) }
+          val mergeGroupbyBoundsExprs = groupingBnds.zip(renamedGroupByNames).map { case (re,name) =>
             RangeBoundedExpr(
               Alias(wrapAgg(Max(re.lb)),name(0))(),
               Alias(re.bg,name(1))(),
               Alias(wrapAgg(Max(re.ub)),name(2))()
             )
           }
-          val groupAttrPairs = groupByAttrBnds.zip(groupingBnds)
+          val groupAttrPairs = renamedGroupByBoundNames.zip(groupingBnds)
 
           // group on group-by attributes and merge bounds of group attributes for all tuples with same group-by values
-          val groupingMergeGrp = groupingMerge.map( _.bg)
-          val groupingMergeAggs = groupingMerge.map( x => Seq(x.lb, x.ub)).flatten
+          val groupingMergeGrp = mergeGroupbyBoundsExprs.map( _.bg)
+          val groupingMergeAggs = mergeGroupbyBoundsExprs.map( x => Seq(x.lb, x.ub)).flatten
 
-          val mergeGroupBounds = Aggregate(
+          val mergeGroupBoundsAgg = Aggregate(
             groupingMergeGrp,
             groupingMergeGrp ++ groupingMergeAggs,
             rewrittenChild
           )
 
+          tlog(s"""GROUP BY:\n----------------------------------------\nORIGINAL GROUP-BY: $groupingBoundsGrps \nBOUNDED EXPRESSIONS: $groupingBnds""")
+          tlog("GROUP BY RENAMED: " + renamedGroupByNames.map(x => x.mkString("(",",",")")).mkString("\n"))
+
           // join grouping bounds with input
           val joinCond = foldAnd(groupAttrPairs.map { case (newg, g) => newg.overlaps(g) }:_*)
-          val join = Join(
-            mergeGroupBounds,
+          val joinPossibleGrpMembers = Join(
+            mergeGroupBoundsAgg,
             rewrittenChild,
             Inner,
             Some(joinCond),
@@ -382,29 +451,70 @@ class CaveatRangePlan()
           )
           val certainEqual = foldAnd(groupAttrPairs.map { case (l,r) => l.certainlyEqualTo(r) }:_*)
           val bgEqual = foldAnd(groupAttrPairs.map { case (l,r) => l.bgEqualTo(r) }:_*)
-          val rowAnnots = RangeBoundedExpr(
-            Alias(
-              wrapAgg(Max(CaseWhen(Seq((certainEqual,Literal(1))),Literal(0)))),
-              rowAnnotAtts(0)._2
-            )(),
-            Alias(
-              wrapAgg(Max(CaseWhen(Seq((bgEqual,Literal(1))),Literal(0)))),
-              rowAnnotAtts(1)._2
-            )(),
-            Alias(
-              wrapAgg(Sum(rowAnnotAtts(2)._1)),
-              rowAnnotAtts(2)._2
-            )()
-          )
-          val groupByExprs = groupByAttrBnds.map( _.toSeq).flatten
-          val resultBounds = rowAnnots.toSeq ++ aggregateExpressions
+
+          /*
+           * Calulate row annotations as follows:
+           *  - for aggregation without group-by exactly one result is returned: (1,1,1)
+           *  - for aggreagtion with group-by:
+           *     - the group certainly exists if there is at least one tuple
+           *       belonging to this group that certainly exists and has certain
+           *       group-by values
+           *     - the group exists in the best guess world if there is at least
+           *       one tuple which belongs to this group in the best guess world
+           *     - an upper bound on the maximal multiplicity of the tuple (the
+           *       maximum number of groups it represents) is determined by
+           *       assuming that for each range annotated input that could
+           *       belong to the group (overlaps on group-by ranges) each of its
+           *       "duplicates" will end up forming a separate group. For
+           *       instance, grouping on A for { (A: [1,20], B:[3,3]) ->
+           *       [1,2,4], (A: [15,50], B:[3,3]) -> [1,2,5] } a result tuple
+           *       (A:[1,20], ...) may represent up to 9 = 4 + 5 groups.
+           */
+          val rowAnnots =
+            RangeBoundedExpr(
+              Alias(
+                wrapAgg(Max(CaseWhen(Seq((certainEqual,Literal(1))),Literal(0)))),
+                rowAnnotAtts(0)._2
+              )(),
+              Alias(
+                wrapAgg(Max(CaseWhen(Seq((bgEqual,Literal(1))),Literal(0)))),
+                rowAnnotAtts(1)._2
+              )(),
+              Alias(
+                wrapAgg(Sum(rowAnnotAtts(2)._1)),
+                rowAnnotAtts(2)._2
+              )()
+            )
+
+          // generate final expressions
+          // we are gouping on group-by attributes and their bounds
+          val groupByExprs = renamedGroupByBoundNames.map( _.toSeq).flatten
+
+          /* We construct result expressions from the original result "projection" list by
+           *  replacing group-by expressions with references to the renamed
+           *  group-by expressions, then applying the range expression rewrites
+           *  to get [[RangeBoundedExpr]] (bounded expression triples). The
+           *  final result projections are then the best guess values of these
+           *  bounded expressions followed by the row annotations computed using
+           *  [[rowAnnots]] defined above, and then the bounds for the result
+           *  expressions (the lower bound and upper bound expressions from the
+           *  results of the expression rewrite.
+           */
+          val groupExprToNewNames = groupingExpressions.zip(renamedGroupByBoundNames.map(_.bg)).toMap
+          val resultExprs = aggregateExpressions
+            .map(replaceGroupByInExpression(_, groupExprToNewNames))
             .map(CaveatRangeExpression(_))
-            .map( x => x.asInstanceOf[RangeBoundedExpr[NamedExpression]].toSeq())
-            .flatten
+            .zip(resultRangeNames)
+            .map{ case (exprs,names) =>
+              exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => Alias(expr, name.name)())
+            }.asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
+          val resultBestGuess = resultExprs.map(_.bg)
+          val resultAttrBounds = resultExprs.map( x=> Seq(x.lb,x.ub) ).flatten
+
           val agg = Aggregate(
             groupByExprs,
-            aggregateExpressions ++ resultBounds,
-            join
+            resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds,
+            joinPossibleGrpMembers
           )
           logop(agg)
           agg
@@ -599,7 +709,7 @@ class CaveatRangePlan()
                 CaveatRangeEncoding.rowAnnotationExpressions(LEFT_ANNOT_PREFIX) ++
                 CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(left.output, LEFT_ANNOT_PREFIX)
                 )
-              .map { case (x,y) => Alias(x, y.name)() }
+              .map { case (x,y) => renameExpr(x, y.name) }
         val rightAnnotProjections =
           (CaveatRangeEncoding.rowAnnotationExpressions() ++
             CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(right.output))
@@ -607,7 +717,7 @@ class CaveatRangePlan()
                 CaveatRangeEncoding.rowAnnotationExpressions(RIGHT_ANNOT_PREFIX) ++
                 CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(right.output, RIGHT_ANNOT_PREFIX)
                 )
-              .map { case (x,y) => Alias(x, y.name)() }
+              .map { case (x,y) => renameExpr(x, y.name) }
         val rewrLeft = Project(
           left.output ++ leftAnnotProjections,
           apply(left)
@@ -857,9 +967,9 @@ class CaveatRangePlan()
       Option(rowAnnotation).map { x =>
         {
           Seq(
-          Alias(x.lb, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(0))(),
-          Alias(x.bg, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(1))(),
-          Alias(x.ub, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(2))()
+          renameExpr(x.lb, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(0)),
+          renameExpr(x.bg, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(1)),
+          renameExpr(x.ub, CaveatRangeEncoding.rowAnnotationAttrNames(annotationAttr)(2))
           )
         }}
         .getOrElse {
@@ -868,7 +978,7 @@ class CaveatRangePlan()
           else
             CaveatRangeEncoding.rowAnnotationExpressions(annotationAttr).zip(
               CaveatRangeEncoding.rowAnnotationExpressions(outputAnnotationAttr))
-          .map { case (in,out) => Alias(in, out.name)() }
+          .map { case (in,out) => renameExpr(in, out.name) }
         }
 
     val realColAnnotations: Seq[NamedExpression] =
@@ -876,8 +986,8 @@ class CaveatRangePlan()
         .map { col =>
           col.flatMap { case (a, x) =>
             Seq(
-              Alias(x.lb, CaveatRangeEncoding.attributeAnnotationAttrName(a, annotationAttr)(0))(),
-              Alias(x.ub, CaveatRangeEncoding.attributeAnnotationAttrName(a, annotationAttr)(1))()
+              renameExpr(x.lb, CaveatRangeEncoding.attributeAnnotationAttrName(a, annotationAttr)(0)),
+              renameExpr(x.ub, CaveatRangeEncoding.attributeAnnotationAttrName(a, annotationAttr)(1))
             )
           }
         }
@@ -887,7 +997,7 @@ class CaveatRangePlan()
           else
             CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes,annotationAttr).zip(
               CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes,outputAnnotationAttr))
-              .map { case (in,out) => Alias(in, out.name)() }
+              .map { case (in,out) => renameExpr(in, out.name) }
         }
 
     { CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(normalAttributes) }
@@ -896,6 +1006,6 @@ class CaveatRangePlan()
   }
 
   private def selfProject(a: NamedExpression): NamedExpression =
-    Alias(a, a.name)()
+    renameExpr(a, a.name)
 
 }

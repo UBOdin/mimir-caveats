@@ -133,7 +133,7 @@ object CaveatRangeEncoding
     RangeBoundedExpr(
       attributeAnnotationExpressions(attrName, annotation)(0),
       UnresolvedAttribute(attrName),
-      attributeAnnotationExpressions(attrName, annotation)(2)
+      attributeAnnotationExpressions(attrName, annotation)(1)
     )
 
   def attributeAnnotationAttrName(

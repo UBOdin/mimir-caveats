@@ -11,6 +11,16 @@ object expressionLogic
     e.collect[Attribute] { case a: Attribute => a }.toSet
   }
 
+  // /**
+  //   * Construct a new expression tree by applying [[f]] to all nodes in the
+  //   * expression tree rooted at [[e]].
+  //   *  @param e input expression
+  //   *  @param f function the constructs the new expression (
+  //   */
+  // def mutateExpr(e: Expression, f: Expression => Expression) = {
+
+  // }
+
   def negate(e: Expression): Expression =
     e match {
       case Not(n) => n
