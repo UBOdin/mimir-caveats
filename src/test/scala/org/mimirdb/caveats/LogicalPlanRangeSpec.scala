@@ -72,9 +72,9 @@ class LogicalPlanRangeSpec
   {
     val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
     tracePlan(annotated,trace)
-    annotated.collect()
-    true
- //   annotated must beBagEqualsTo(expectedOutput)
+//    annotated.collect()
+//    true
+    annotated must beBagEqualsTo(expectedOutput)
   }
 
   def annotOrderedEqualToDF(
