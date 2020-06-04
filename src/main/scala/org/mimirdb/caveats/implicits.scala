@@ -51,8 +51,13 @@ class DataFrameImplicits(df:DataFrame)
   def rangeCaveats = Caveats.annotate(df, CaveatRangeStrategy())
   def uncertainToAnnotation(
     model: UncertaintyModel,
-    annotationType: AnnotationInstrumentationStrategy
-  ) = Caveats.translateUncertainToAnnotation(df, model, annotationType)
+    annotationType: AnnotationInstrumentationStrategy,
+    trace: Boolean = false
+  ) = Caveats.translateUncertainToAnnotation(df,
+    model,
+    annotationType,
+    Constants.ANNOTATION_ATTRIBUTE,
+    trace)
 
   def listCaveatSets(
     row: Boolean = true,
@@ -95,9 +100,9 @@ class DataFrameImplicits(df:DataFrame)
 
   val implicitTruth = new ColumnImplicits(lit(true))
 
-  def caveat(message: Column): DataFrame =  
+  def caveat(message: Column): DataFrame =
     df.filter( implicitTruth.caveat(message) )
-  def caveat(message: String): DataFrame =  
+  def caveat(message: String): DataFrame =
     df.filter( implicitTruth.caveat(message) )
   def caveatIf(message: Column, condition: Column): DataFrame =
     df.filter( implicitTruth.caveatIf(message, condition) )

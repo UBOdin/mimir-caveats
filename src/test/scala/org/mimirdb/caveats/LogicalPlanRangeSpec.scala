@@ -2,18 +2,24 @@ package org.mimirdb.caveats
 
 import org.specs2.mutable.Specification
 
-import org.apache.log4j.{ Level, Logger }
-import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
-import org.apache.spark.sql.functions._
-import org.mimirdb.caveats.Constants._
-import org.mimirdb.caveats.implicits._
-import org.mimirdb.caveats.annotate._
 
+import org.apache.log4j.{ Level, Logger }
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.{ SparkSession, DataFrame, Column, Row }
+
+import org.mimirdb.caveats.Constants._
+import org.mimirdb.caveats.annotate._
+import org.mimirdb.caveats.implicits._
+import org.mimirdb.spark.sparkWorkarounds._
 import org.mimirdb.test._
 
 class LogicalPlanRangeSpec
   extends Specification
-  with SharedSparkTestInstance
+    with SharedSparkTestInstance
+    with DataFrameMatchers
 {
   import spark.implicits._
 
@@ -30,123 +36,467 @@ class LogicalPlanRangeSpec
     return ret
   }
 
-  def annotate[T](
+  def annotWithCombinerToDF(
     input: DataFrame,
-    trace: Boolean = false,
-  )( op : Seq[((Int, Int, Int), Map[String,(String, String)])] => T) =
+    expectedOutput: String,
+    trace: Boolean = false
+  ) : Boolean =
   {
-    val annotated = Caveats.annotate(input, CaveatRangeStrategy())
-    if(trace){
-      println("------ FINAL ------")
-      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
-      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
-      annotated.show(10,100)
-    }
-    op(
-      annotated
-       .collect()
-       .map { row =>
-         val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
-         val rowann = annotation.getAs[Row](ROW_FIELD)
-         val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
-         if(trace){ println( "ROW: "+row ) }
-         (
-           (
-             rowann.getAs[Int](LOWER_BOUND_FIELD),
-             rowann.getAs[Int](BEST_GUESS_FIELD),
-             rowann.getAs[Int](UPPER_BOUND_FIELD),
-           ),
-           attributes.schema
-                     .fields
-                     .map { _.name }
-                     .map { name =>
-                       val r = attributes.getAs[Row](name)
-                       name ->
-                       (
-                         r.getAs[String](LOWER_BOUND_FIELD),
-                         r.getAs[String](UPPER_BOUND_FIELD)
-                       )
-                     }
-                     .toMap
-         )
-       }
+    val withCaveats = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+    val annotated = withCaveats.planToDF(
+      new CaveatRangePlan().combineBestGuess(withCaveats.plan),
     )
-  }
-
-  def noAnnotate[T](
-    input: DataFrame,
-    trace: Boolean = false,
-  )( op : Seq[((Int, Int, Int), Map[String,(String, String)])] => T) =
-  {
-    val annotated = input
     if(trace){
       println("------ FINAL ------")
-      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
-      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
       println(annotated)
+      println(annotated.queryExecution)
+      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+      annotated.show(30,100)
     }
-    op(
-      annotated
-       .collect()
-       .map { row =>
-         val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
-         val rowann = annotation.getAs[Row](ROW_FIELD)
-         val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
-         if(trace){ println( "ROW: "+row ) }
-         (
-           (
-             rowann.getAs[Int](LOWER_BOUND_FIELD),
-             rowann.getAs[Int](BEST_GUESS_FIELD),
-             rowann.getAs[Int](UPPER_BOUND_FIELD),
-           ),
-           attributes.schema
-                     .fields
-                     .map { _.name }
-                     .map { name =>
-                       val r = attributes.getAs[Row](name)
-                       name ->
-                       (
-                         r.getAs[String](LOWER_BOUND_FIELD),
-                         r.getAs[String](UPPER_BOUND_FIELD)
-                       )
-                     }
-                     .toMap
-         )
-       }
-    )
+    annotated must beBagEqualsTo(expectedOutput)
+  }
+
+  def annotBagEqualToDF(
+    input: DataFrame,
+    expectedOutput: String,
+    trace: Boolean = false
+  ) : Boolean =
+  {
+    val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+    if(trace){
+      println("------ FINAL ------")
+      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+      annotated.show(30,100)
+    }
+    annotated must beBagEqualsTo(expectedOutput)
+  }
+
+  def annotOrderedEqualToDF(
+    input: DataFrame,
+    expectedOutput: String,
+    trace: Boolean = false
+  ) : Boolean =
+  {
+    val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+    if(trace){
+      println("------ FINAL ------")
+      println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+      println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+      annotated.show(30,100)
+    }
+    annotated must beOrderedEqualsTo(expectedOutput)
   }
 
 
-  def ones(): (Int,Int,Int) = (1,1,1)
+  // def annotateBag[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Map[((Int, Int, Int), Map[String,(String, String, String)]), Int] => T) =
+  // {
+  //   op(
+  //     seqToBag(annotateSeq(input,trace))
+  //   )
+  // }
 
-  def repeat[T](el: T, cnt: Int): Seq[T] = {
-    (1 to cnt).map { x => el }
-  }
+  // def annotate[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Seq[((Int, Int, Int), Map[String,(String, String, String)])] => T) =
+  // {
+  //   op(
+  //     annotateSeq(input, trace)
+  //   )
+  // }
+
+  // def annotateSeq[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // ): Seq[((Int, Int, Int), Map[String,(String, String, String)])] = {
+  //   val annotated = Caveats.annotate(input, CaveatRangeStrategy(), Constants.ANNOTATION_ATTRIBUTE, trace)
+  //   if(trace){
+  //     println("------ FINAL ------")
+  //     println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+  //     println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+  //     annotated.show(10,100)
+  //   }
+  //     annotated
+  //      .collect()
+  //      .map { row =>
+  //        val attributes = CaveatRangeEncoding
+  //          .getNormalAttributesFromNamedExpressions(annotated.queryExecution.logical.output,
+  //            Constants.ANNOTATION_ATTRIBUTE)
+  //        if(trace){ println( "ROW: " + row ) }
+  //        (
+  //          (
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(0)),
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(1)),
+  //            row.getAs[Int](CaveatRangeEncoding.rowAnnotationAttrNames()(2)),
+  //          ),
+  //          attributes.map { _.name }
+  //                    .map { name =>
+  //                      // val r = attributes.getAs[Row](name)
+  //                      name ->
+  //                      (
+  //                        convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(0))),
+  //                        convertToString(row.getAs[String](name)),
+  //                        convertToString(row.getAs[String](CaveatRangeEncoding.attributeAnnotationAttrName(name)(1)))
+  //                      )
+  //                    }
+  //                    .toMap
+  //        )
+  //      }
+  // }
+
+  // def convertToString(v: Any): String =
+  //   v match {
+  //     case x if x == null => "null"
+  //     case x:Int => Integer.toString(x)
+  //     case x:Double => Double.box(x).toString()
+  //     case x:Boolean => Boolean.box(x).toString()
+  //     case x:String => x
+  //     case x => x.toString()
+  //   }
+
+  // def noAnnotate[T](
+  //   input: DataFrame,
+  //   trace: Boolean = false,
+  // )( op : Seq[((Int, Int, Int), Map[String,(String, String)])] => T) =
+  // {
+  //   val annotated = input
+  //   if(trace){
+  //     println("------ FINAL ------")
+  //     println("PARSED:\n----------\n%s", annotated.queryExecution.logical)
+  //     println("ANALYZED:\n----------\n%s",annotated.queryExecution.analyzed)
+  //     println(annotated)
+  //   }
+  //   op(
+  //     annotated
+  //      .collect()
+  //      .map { row =>
+  //        val annotation = row.getAs[Row](ANNOTATION_ATTRIBUTE)
+  //        val rowann = annotation.getAs[Row](ROW_FIELD)
+  //        val attributes = annotation.getAs[Row](ATTRIBUTE_FIELD)
+  //        if(trace){ println( "ROW: "+row ) }
+  //        (
+  //          (
+  //            rowann.getAs[Int](LOWER_BOUND_FIELD),
+  //            rowann.getAs[Int](BEST_GUESS_FIELD),
+  //            rowann.getAs[Int](UPPER_BOUND_FIELD),
+  //          ),
+  //          attributes.schema
+  //                    .fields
+  //                    .map { _.name }
+  //                    .map { name =>
+  //                      val r = attributes.getAs[Row](name)
+  //                      name ->
+  //                      (
+  //                        r.getAs[String](LOWER_BOUND_FIELD),
+  //                        r.getAs[String](UPPER_BOUND_FIELD)
+  //                      )
+  //                    }
+  //                    .toMap
+  //        )
+  //      }
+  //   )
+  // }
+
+  // def ones(): (Int,Int,Int) = (1,1,1)
+
+  // def repeat[T](el: T, cnt: Int): Seq[T] = {
+  //   (1 to cnt).map { x => el }
+  // }
+
+  // def triplicate[T](el: T): (T,T,T) = (el,el,el)
+
+  // def tripleS[T](el: T): (String, String, String) =  (el.toString(), el.toString(), el.toString())
+
+  // def toTripleStringSeq[T](in: T*): Seq[(String,String,String)] = in.map(x => if (x == null) (null,null,null) else tripleS(x))
+
+  // def toTripleStringBag[T](in: T*): Map[(String,String,String),Int] = seqToBag(in.map(x => if (x == null) ("null","null","null") else tripleS(x)))
+
+  // def seqToBag[T](in: Seq[T]): Map[T,Int] = in.groupBy{ x => x }
+  //   .map { case (k, v) => k -> v.map( x => 1).reduce( (x,y) => x + y ) }
+
+  // def rann[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[(Int,Int,Int), Int] =
+  //   in.toSeq.map{ case (k,v) => k._1 -> v }
+  //     .groupBy{ case (k,v) => k }
+  //     .map{ case (k,v) => k -> v.map{ case(k,v) => v }.reduce( (x,y) => x + y) }
+
+  // def manOf[T: Manifest](t: T): Manifest[T] = manifest[T]
+
+  // def bagOfRowsEquals(
+  //   l: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int],
+  //   r: Map[((Int,Int,Int), Map[String,(String,String,String)]), Int]
+  // ): Boolean = {
+  //   val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
+  //   if (!res) {
+  //     val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
+  //     val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
+  //     val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
+  //     println(s"Expected: $r")
+  //     println(s"Actual: $l")
+  //     println(s"Not equal annotations: $conflicting")
+  //     println(s"Only in excepted: $onlyRight")
+  //     println(s"Only in actual: $onlyLeft")
+  //   }
+  //   res
+  // }
+
+  // def bagEquals[T](l: Map[(T,T,T),Int], r: Map[(T,T,T),Int]): Boolean = {
+  //   val res = l.size == r.size && (l.forall { case (k,v) => r.contains(k) && r(k) == v }) && (r.forall { case (k,v) => l.contains(k) && l(k) == v })
+  //   if (!res) {
+  //     val conflicting = l.filter{ case(k,v) => r.contains(k) && r(k) != v }
+  //     val onlyLeft = l.filterNot { case (k,v) => r.contains(k)  }
+  //     val onlyRight = r.filterNot { case (k,v) => l.contains(k) }
+  //     println("Left type: " + l.getClass + " and right type: " + r.getClass)
+  //     println("left types: " + l.map{ case (k,v) => k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
+  //     println("Right types: " + r.map{ case (k,v) => if (k._1 == null) "null" else k._1.getClass().toString() + ": " + v.getClass().toString() }.reduce( (x,y) => x + y))
+  //     println(s"Expected: $r")
+  //     println(s"Actual: $l")
+  //     println(s"Conflicting values: $conflicting")
+  //     println(s"Only in excepted: $onlyRight")
+  //     println(s"Only in actual: $onlyLeft")
+  //   }
+  //   res
+  // }
+
+  // def parseBag(in: String): Map[((Int,Int,Int), Map[String,(String,String,String)]), Int] = {
+  //   val (header,data) = DataFramesSerializationParser.parseDFasTable(in)
+  //   val rowAnnPos = header.indexWhere( CaveatRangeEncoding.isRowAnnotationAttribute(_))
+  //   var attributePos = header.indexWhere( x =>
+  //     CaveatRangeEncoding.isAnnotationAttribute(x) &&
+  //     !CaveatRangeEncoding.isRowAnnotationAttribute(x)
+  //   )
+  //   if (attributePos == -1) {
+  //     attributePos = header.length
+  //   }
+  //   val normalAttributes = header.slice(0,rowAnnPos)
+
+  //   seqToBag(data.map
+  //     {
+  //       x => {
+  //         val normalAtts = x.slice(0,rowAnnPos)
+  //         val rowAtts = x.slice(rowAnnPos,attributePos).map( x => Integer.parseInt(x) )
+  //         val rangeAtts = x.slice(attributePos, x.length)
+  //         val attrMap = normalAttributes.map {
+  //           a => {
+  //             val pos = normalAttributes.indexOf(a)
+  //             val lbPos = 2 * pos
+  //             val ubPos = lbPos + 1
+  //             a -> (rangeAtts(lbPos), normalAtts(pos), rangeAtts(ubPos))
+  //           }
+  //         }.toMap
+
+  //         ((rowAtts(0), rowAtts(1), rowAtts(2)), attrMap)
+  //         }
+  //     }
+  //   )
+  // }
+
+  // def attrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int]): Map[Map[String,(T,T,T)], Int] = in.map{ case (k,v) => k._2 -> v }
+
+  // def projectOnAttrs[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: Seq[String]): Map[Map[String,(T,T,T)], Int] = in.toSeq.map{
+  //   case (k,v)
+  //       =>
+  //     k._2.filter{ case (name,va) => a.contains(name) } -> v
+  // }
+  //   .groupBy{ case (k,v) => k }
+  //   .map { case (k,v) => k -> v.map{ case (va, cnt) => cnt }.reduce( (x,y) => x + y) }
+
+  // def projectOneAttr[T](in: Map[((Int,Int,Int), Map[String,(T,T,T)]), Int], a: String): Map[(T,T,T), Int] = {
+  //   projectOnAttrs(in, Seq(a)).map{ case (k,v) => k(a) -> v }
+  // }
 
   "DataFrame Range Annotations" >> {
 
-    "support simple operators without caveats" >> {
-      annotate(
-        dfr.select()
-        // , trace = true
-      ) { result =>
-        result.map { _._1 } must be equalTo(repeat(ones, 7))
+    "Certain inputs" >> {
+
+      "constant tuple" >> {
+        annotBagEqualToDF(
+          dfr.planToDF(
+            Project(
+              Seq(Alias(Literal(1),"A")(), Alias(Literal(2),"B")()),
+              OneRowRelation()
+            ),
+          ),
+"""
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|  B|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|  2|               1|               1|               1|             1|             1|             2|             2|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
       }
 
-      annotate(
-        dfr.filter { $"A" =!= 1 }
-          // , trace = true
-      ) { result =>
-          result.map { _._1 } must be equalTo(repeat(ones, 3))
+      "projections" >> {
+        annotBagEqualToDF(
+          dfr.select(),
+"""
++----------------+----------------+----------------+
+|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|
++----------------+----------------+----------------+
+|               1|               1|               1|
+|               1|               1|               1|
+|               1|               1|               1|
+|               1|               1|               1|
+|               1|               1|               1|
+|               1|               1|               1|
+|               1|               1|               1|
++----------------+----------------+----------------+
+"""
+ // , trace = true
+        )
+
+        annotBagEqualToDF(
+          dfr.select($"A"),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               1|               1|             1|             1|
+|  1|               1|               1|               1|             1|             1|
+|  2|               1|               1|               1|             2|             2|
+|  1|               1|               1|               1|             1|             1|
+|  1|               1|               1|               1|             1|             1|
+|  2|               1|               1|               1|             2|             2|
+|  4|               1|               1|               1|             4|             4|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+  // , trace = true
+        )
+
+        annotBagEqualToDF(
+          dfr.select((($"A" + $"B") * 2).as("X")),
+"""
++----+----------------+----------------+----------------+--------------+--------------+
+|   X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
++----+----------------+----------------+----------------+--------------+--------------+
+| 6.0|               1|               1|               1|           6.0|           6.0|
+| 8.0|               1|               1|               1|           8.0|           8.0|
+|null|               1|               1|               1|          null|          null|
+| 6.0|               1|               1|               1|           6.0|           6.0|
+|10.0|               1|               1|               1|          10.0|          10.0|
+| 8.0|               1|               1|               1|           8.0|           8.0|
+|12.0|               1|               1|               1|          12.0|          12.0|
++----+----------------+----------------+----------------+--------------+--------------+
+"""
+  // , trace = true
+        )
+
+        annotBagEqualToDF(
+          dfr.select($"A", $"C"),
+"""
++---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|   C|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_C_LB|__CAVEATS_C_UB|
++---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|   3|               1|               1|               1|             1|             1|             3|             3|
+|  1|   1|               1|               1|               1|             1|             1|             1|             1|
+|  2|   1|               1|               1|               1|             2|             2|             1|             1|
+|  1|null|               1|               1|               1|             1|             1|          null|          null|
+|  1|   2|               1|               1|               1|             1|             1|             2|             2|
+|  2|   1|               1|               1|               1|             2|             2|             1|             1|
+|  4|   4|               1|               1|               1|             4|             4|             4|             4|
++---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+// , trace = true
+        )
+
+        annotBagEqualToDF(
+          dfr.select($"A", $"C", when($"C" === 1, $"A").otherwise($"C").as("X")),
+"""
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|  B|  X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  1|  2|  2|               1|               1|               1|             1|             1|             2|             2|             2|             2|
+|  1|  3|  3|               0|               1|               1|             1|             1|             3|             3|             3|             3|
+|  2|  1|  2|               0|               1|               1|             2|             2|             1|             1|             2|             2|
+|  3|  3|  3|               0|               0|               1|             3|             3|             3|             3|             3|             3|
++---+---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
+
       }
 
-      annotate(
-        dfr.select($"A", $"B").join(dfs.filter($"D" === 2), $"A" === $"D")
-          // , trace = true
-      ) { result =>
-          result.map { _._1 } must be equalTo(repeat(ones, 4))
+      "filter" >> {
+
+        annotBagEqualToDF(
+          dfr.filter { $"A" =!= 1 and $"B" < $"C"},
+"""
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|   B|  C|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|__CAVEATS_C_LB|__CAVEATS_C_UB|
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  4|   2|  4|               1|               1|               1|             4|             4|             2|             2|             4|             4|
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+//  , trace = true
+        )
+
+        annotBagEqualToDF(
+          dfr.filter { $"A" =!= 1 },
+"""
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|   B|  C|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|__CAVEATS_C_LB|__CAVEATS_C_UB|
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  2|null|  1|               1|               1|               1|             2|             2|          null|          null|             1|             1|
+|  2|   2|  1|               1|               1|               1|             2|             2|             2|             2|             1|             1|
+|  4|   2|  4|               1|               1|               1|             4|             4|             2|             2|             4|             4|
++---+----+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+//   , trace = true
+        )
+
       }
 
+      "union" >> {
+
+        annotBagEqualToDF(
+          dfr.select($"A").union(dfr.select($"B")),
+"""
++----+----------------+----------------+----------------+--------------+--------------+
+|   A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++----+----------------+----------------+----------------+--------------+--------------+
+|   1|               1|               1|               1|             1|             1|
+|   1|               1|               1|               1|             1|             1|
+|   2|               1|               1|               1|             2|             2|
+|   1|               1|               1|               1|             1|             1|
+|   1|               1|               1|               1|             1|             1|
+|   2|               1|               1|               1|             2|             2|
+|   4|               1|               1|               1|             4|             4|
+|   2|               1|               1|               1|             2|             2|
+|   3|               1|               1|               1|             3|             3|
+|null|               1|               1|               1|          null|          null|
+|   2|               1|               1|               1|             2|             2|
+|   4|               1|               1|               1|             4|             4|
+|   2|               1|               1|               1|             2|             2|
+|   2|               1|               1|               1|             2|             2|
++----+----------------+----------------+----------------+--------------+--------------+
+"""
+  , trace = true
+        )
+      }
+
+
+      "joins" >> {
+        annotBagEqualToDF(
+          dfr.select($"A", $"B").join(dfs.filter($"D" === 2), $"A" === $"D"),
+"""
++---+----+---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|   B|  D|   E|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|__CAVEATS_D_LB|__CAVEATS_D_UB|__CAVEATS_E_LB|__CAVEATS_E_UB|
++---+----+---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  2|null|  2|null|               1|               1|               1|             2|             2|          null|          null|             2|             2|          null|          null|
+|  2|null|  2|   2|               1|               1|               1|             2|             2|          null|          null|             2|             2|             2|             2|
+|  2|   2|  2|null|               1|               1|               1|             2|             2|             2|             2|             2|             2|          null|          null|
+|  2|   2|  2|   2|               1|               1|               1|             2|             2|             2|             2|             2|             2|             2|             2|
++---+----+---+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+         // , trace = true
+        )
+      }
     }
 
     // "support aggregates without caveats" >> {
@@ -166,60 +516,220 @@ class LogicalPlanRangeSpec
     // }
 
     "TIP inputs" >> {
-      annotate(
-        dftip.uncertainToAnnotation(
-          TupleIndependentProbabilisticDatabase("P"),
-          CaveatRangeStrategy())
-        // , trace = true
-      ) { result =>
-        result.map { _._1 } must be equalTo(
-          Seq(
-            (1,1,1),
-            (0,1,1),
-            (0,1,1),
-            (0,0,1)
-          )
+
+      "tableaccess" >> {
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+             // , trace = true
+          ),
+"""
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|  B|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|  2|               1|               1|               1|             1|             1|             2|             2|
+|  1|  3|               0|               1|               1|             1|             1|             3|             3|
+|  2|  1|               0|               1|               1|             2|             2|             1|             1|
+|  3|  3|               0|               0|               1|             3|             3|             3|             3|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+            // , trace = true
         )
       }
 
-      annotate(
-        dftip.uncertainToAnnotation(
-          TupleIndependentProbabilisticDatabase("P"),
-          CaveatRangeStrategy()).filter( $"A" === 1 or $"A" === 3 )
-        // , trace = true
-      ) { result =>
-        result.map { _._1 } must be equalTo(
-          Seq(
-            (1,1,1),
-            (0,1,1),
-            (0,0,1)
-          )
+      "projections" >> {
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+             // , trace = true
+          ).select($"A", $"B", when($"B" === 1, $"A").otherwise($"B").as("X")),
+"""
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  A|   C|   X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_C_LB|__CAVEATS_C_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+|  1|   3|   3|               1|               1|               1|             1|             1|             3|             3|             3|             3|
+|  1|   1|   1|               1|               1|               1|             1|             1|             1|             1|             1|             1|
+|  2|   1|   2|               1|               1|               1|             2|             2|             1|             1|             2|             2|
+|  1|null|null|               1|               1|               1|             1|             1|          null|          null|             1|             1|
+|  1|   2|   2|               1|               1|               1|             1|             1|             2|             2|             2|             2|
+|  2|   1|   2|               1|               1|               1|             2|             2|             1|             1|             2|             2|
+|  4|   4|   4|               1|               1|               1|             4|             4|             4|             4|             4|             4|
++---+----+----+----------------+----------------+----------------+--------------+--------------+--------------+--------------+--------------+--------------+
+"""
+ , trace = true
+        )
+
+      }
+
+      "filter" >> {
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).filter( $"A" === 1 or $"A" === 3 ),
+"""
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|  B|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|  2|               1|               1|               1|             1|             1|             2|             2|
+|  1|  3|               0|               1|               1|             1|             1|             3|             3|
+|  3|  3|               0|               0|               1|             3|             3|             3|             3|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+       //     , trace = true
+        )
+
+      }
+
+      "union" >> {
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               1|               1|             1|             1|
+|  1|               0|               1|               1|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
+        )
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+            ).select($"B"))
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+            ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               1|               1|             1|             1|
+|  1|               0|               1|               1|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
+|  2|               1|               1|               1|             2|             2|
+|  3|               0|               1|               1|             3|             3|
+|  1|               0|               1|               1|             1|             1|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
         )
       }
 
-      annotate(
-        dftip.uncertainToAnnotation(
-          TupleIndependentProbabilisticDatabase("P"),
-          CaveatRangeStrategy())
-          .select( $"A" ).join(
-            dftip.uncertainToAnnotation(
-              TupleIndependentProbabilisticDatabase("P"),
-              CaveatRangeStrategy())
-              .select( $"B"),
-            $"A" === $"B"
+      "joins" >> {
+
+        annotBagEqualToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+  //            , trace = true
           )
-         // , trace = true
-      ) { result =>
-        result.map { _._1 } must be equalTo(
-          Seq(
-            (0,1,1),
-            (0,1,1),
-            (0,1,1),
-            (0,0,1),
-            (0,0,1)
-          )
+            .select( $"A" ).join(
+              dftip.uncertainToAnnotation(
+                TupleIndependentProbabilisticDatabase("P"),
+                CaveatRangeStrategy()
+    //              , trace = true
+              )
+                .select( $"B"),
+              $"A" === $"B"
+            ),
+"""
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  A|  B|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|__CAVEATS_B_LB|__CAVEATS_B_UB|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+|  1|  1|               0|               1|               1|             1|             1|             1|             1|
+|  1|  1|               0|               1|               1|             1|             1|             1|             1|
+|  2|  2|               0|               1|               1|             2|             2|             2|             2|
+|  3|  3|               0|               0|               1|             3|             3|             3|             3|
+|  3|  3|               0|               0|               1|             3|             3|             3|             3|
++---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
+"""
+//           , trace = true
+        )
+
+      }
+
+      "best guess combiner" >> {
+
+        annotWithCombinerToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A"),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               2|               2|             1|             1|
+|  2|               0|               1|               1|             2|             2|
+|  3|               0|               0|               1|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+//  , trace = true
+        )
+
+        annotWithCombinerToDF(
+          dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"A")
+            .union(dftip.uncertainToAnnotation(
+            TupleIndependentProbabilisticDatabase("P"),
+            CaveatRangeStrategy()
+         //    , trace = true
+          ).select($"B")),
+"""
++---+----------------+----------------+----------------+--------------+--------------+
+|  A|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_A_LB|__CAVEATS_A_UB|
++---+----------------+----------------+----------------+--------------+--------------+
+|  1|               1|               3|               3|             1|             1|
+|  2|               1|               2|               2|             2|             2|
+|  3|               0|               1|               3|             3|             3|
++---+----------------+----------------+----------------+--------------+--------------+
+"""
+ // , trace = true
         )
       }
+
 
     }
 

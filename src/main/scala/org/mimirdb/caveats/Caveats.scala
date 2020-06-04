@@ -17,6 +17,8 @@ import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
 import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
+import org.mimirdb.spark.sparkWorkarounds._
+
 /**
   * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
   * for a particular [AnnotationType].
@@ -47,26 +49,32 @@ object Caveats
    **/
   def annotate(dataset:DataFrame,
     annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
-    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE,
+    trace: Boolean = false
   ): DataFrame =
   {
     val execState = dataset.queryExecution
     val plan = execState.analyzed
-    val annotated = annotator(plan)
+    val annotated = annotator(plan, trace)
     val baseSchema = plan.schema
-    val annotSchema = if (baseSchema.fields.exists(_.name == annotationAttribute)) baseSchema else baseSchema.add(
-          annotationAttribute,
-          annotator.outputEncoding.annotationStruct(plan.schema.fieldNames),
-          false
-    )
+    val annotSchema = if (annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema)) baseSchema else
+          annotator.outputEncoding.annotatedSchema(baseSchema, annotationAttribute)
 
-    return new DataFrame(
-      execState.sparkSession,
-      annotated,
-      RowEncoder(annotSchema)
-    )
+    if(trace) {
+      println("is already annotated? " + annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema))
+      println(s"base schema: $baseSchema \n\nrow encoder $annotSchema")
+    }
+
+    dataset.planToDF(annotated)
+
+    // return new DataFrame(
+    //   execState.sparkSession,
+    //   annotated,
+    //   RowEncoder(annotSchema)
+    // )
   }
 
+  //TODO adapt to use new encoding-specific function
   def planIsAnnotated(plan: LogicalPlan, annotation: String = ANNOTATION_ATTRIBUTE): Boolean =
     plan.output.map { _.name }.exists { _.equals(annotation) }
 
@@ -74,21 +82,21 @@ object Caveats
     df: DataFrame,
     model: UncertaintyModel,
     annotator: AnnotationInstrumentationStrategy = defaultAnnotator,
-    annotationAttribute: String = ANNOTATION_ATTRIBUTE
+    annotationAttribute: String = ANNOTATION_ATTRIBUTE,
+    trace: Boolean = false
   ): DataFrame = {
     val plan = df.queryExecution.analyzed
     val annotated = annotator.translateFromUncertaintyModel(plan, model)
     val normalAttrs = model.adaptedSchema(plan.schema)
     val rowEncoder = RowEncoder(
-        normalAttrs.add(
-          annotationAttribute,
-          annotator.outputEncoding.annotationStruct(normalAttrs.fieldNames),
-          false
+          annotator.outputEncoding.annotatedSchema(normalAttrs)
         )
-    )
 
-    println(normalAttrs)
-    println(rowEncoder)
+    if (trace) {
+      println("========================================\nTIP REWRITE\n========================================")
+      println("Normal attributes:\n" + normalAttrs)
+      println("Row encdoer:\n" + rowEncoder)
+    }
     return new DataFrame(
       df.queryExecution.sparkSession,
       annotated,

@@ -9,7 +9,8 @@ import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.{
   Expression,
   Literal,
-  Attribute
+  Attribute,
+  NamedExpression
 }
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{ StructType, StructField, BooleanType }
@@ -20,16 +21,20 @@ import org.mimirdb.caveats.Constants._
 
 import org.mimirdb.caveats.Constants._
 
-object CaveatExistsBooleanStructEncoding extends AnnotationEncoding
+object CaveatExistsBooleanStructEncoding extends SingleAttributeAnnotationEncoding
 {
+
+  def isValidAnnotatedSchema(schema: Seq[String], prefix: String): Boolean = {
+    schema.contains(prefix)
+  }
 
   def allAttributeAnnotationsExpression(
     annotation: String = ANNOTATION_ATTRIBUTE
   ): Expression =
-    UnresolvedExtractValue(
-      UnresolvedAttribute(annotation),
-      Literal(ATTRIBUTE_FIELD)
-    )
+      UnresolvedExtractValue(
+        UnresolvedAttribute(annotation),
+        Literal(ATTRIBUTE_FIELD)
+      )
 
   def attributeAnnotationExpression(
     attr: String,
@@ -48,8 +53,9 @@ object CaveatExistsBooleanStructEncoding extends AnnotationEncoding
       Literal(ROW_FIELD)
     )
 
-  def annotationStruct(baseSchema:StructType): StructType =
+  def nestedAnnotationAttributeStruct(baseSchema:StructType): StructType =
   {
+    StructType(
     StructType(Seq(
       StructField(ROW_FIELD, BooleanType, false),
       StructField(ATTRIBUTE_FIELD, StructType(
@@ -58,6 +64,7 @@ object CaveatExistsBooleanStructEncoding extends AnnotationEncoding
         }
       ), false)
     ))
+    )
   }
 
 }
