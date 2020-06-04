@@ -18,6 +18,18 @@ class ColumnImplicits(col:Column)
   def castWithCaveat(t: DataType, context: String): Column =
     new Column(CaveatedCast(col.expr, t, context = context))
 
+  def castWithCaveat(t: String, tzinfo: Option[String]): Column   = 
+    castWithCaveat(CatalystSqlParser.parseDataType(t), tzinfo)
+
+  def castWithCaveat(t: DataType, tzinfo: Option[String]): Column =
+    castWithCaveat(t, null:String, tzinfo)
+
+  def castWithCaveat(t: String, context: String, tzinfo: Option[String]): Column   = 
+    castWithCaveat(CatalystSqlParser.parseDataType(t), context, tzinfo)
+
+  def castWithCaveat(t: DataType, context: String, tzinfo: Option[String]): Column =
+    new Column(CaveatedCast(col.expr, t, context = context, tzinfo = tzinfo))
+
   def shouldBeTheSameAs(other:Column) =
     new Column(CaveatedMerge(col.expr, other.expr))
 }

@@ -13,11 +13,12 @@ object CaveatedCast
     t: DataType, 
     context: String = null, 
     family: Option[String] = None,
-    key: Seq[Expression] = Seq()
+    key: Seq[Expression] = Seq(),
+    tzinfo: Option[String] = None
   ): Expression = {
     logger.trace(s"CaveatedCast: $expr -> $t")
     ApplyCaveat(
-      value = Cast(expr, t), 
+      value = Cast(expr, t, tzinfo), 
       message = Concat(Seq(
         Literal("Could not cast '"),
         Coalesce(Seq(Cast(expr, StringType), Literal("'NULL'"))),
