@@ -11,6 +11,7 @@ import org.mimirdb.spark.expressionLogic.{
   splitAnd,
   isAggregate
 }
+import com.typesafe.scalalogging.LazyLogging
 
 /**
  * A class for enumerating caveats applied to a specified plan.
@@ -53,6 +54,7 @@ import org.mimirdb.spark.expressionLogic.{
  */
 
 object EnumeratePlanCaveats
+  extends LazyLogging
 {
   /**
    * Enumerate the caveats affecting some slice of the logical plan.
@@ -80,16 +82,19 @@ object EnumeratePlanCaveats
     sort: Boolean = false,
     constraint: Expression = Literal(true)
   ): Seq[CaveatSet] = 
+  {
+    val attributeLookup = plan.output.map { a => a.name.toLowerCase -> a.exprId }.toMap
     recurPlan(
       if(row){ Some(constraint) } else { None }, 
-      attributes.map { _ -> constraint }.toMap, 
+      attributes.map { a => attributeLookup(a.toLowerCase) -> constraint }.toMap, 
       sort, 
       plan
     )
+  }
 
   def recurPlan(
     row: Option[Expression],
-    attributes: Map[String,Expression],
+    attributes: Map[ExprId,Expression],
     sort: Boolean,
     plan: LogicalPlan
   ): Seq[CaveatSet] = 
@@ -97,7 +102,7 @@ object EnumeratePlanCaveats
     def PASS_THROUGH_TO_CHILD(u: UnaryNode) = 
       recurPlan(row, attributes, sort, u.child)
 
-    // println(s"ENUMERATING($row, $attributes, $sort)\n$plan")
+    logger.trace(s"ENUMERATING($row, $attributes, $sort)\n$plan")
 
     plan match {
 
@@ -111,17 +116,17 @@ object EnumeratePlanCaveats
       case Project(projectList: Seq[NamedExpression], child: LogicalPlan) => 
       {
         val relevantProjections = 
-          projectList.filter { expr => attributes contains expr.name }
+          projectList.filter { expr => attributes contains expr.exprId }
         val localCaveats = 
           relevantProjections.flatMap { projectExpression => 
-            val fieldVSlice = inline(attributes(projectExpression.name), projectList)
+            val fieldVSlice = inline(attributes(projectExpression.exprId), projectList)
             EnumerateExpressionCaveats(child, projectExpression, fieldVSlice)
           }
         val allChildDependencies = 
           relevantProjections.flatMap { projectExpression => 
             ExpressionDependency.attributes(
               projectExpression, 
-              inline(attributes(projectExpression.name), projectList)
+              inline(attributes(projectExpression.exprId), projectList)
             )
           }
         val childDependenciesByField = 
@@ -149,10 +154,10 @@ object EnumeratePlanCaveats
         child: LogicalPlan
       ) => 
       {
-        val generatedField = generatorOutput.map { _.name }.toSet
+        val generatedField = generatorOutput.map { _.exprId }.toSet
         val (sliceGeneratorFields, 
              sliceChildFields) = 
-                attributes.partition { case (name, _) => generatedField(name) }
+                attributes.partition { case (exprId, _) => generatedField(exprId) }
 
         val simulatedProjectionList = 
           generatorOutput.map { attribute =>
@@ -166,7 +171,7 @@ object EnumeratePlanCaveats
         // slice.
         def inlineGeneratorFields(vSlice: Expression): Expression =
         {
-          if((attributesOfExpression(vSlice).map { _.name } 
+          if((attributesOfExpression(vSlice).map { _.exprId } 
                 & generatedField).isEmpty)
           {
             vSlice
@@ -227,7 +232,7 @@ object EnumeratePlanCaveats
         val fieldDependenciesToPropagate =
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(condition, _).toSeq }
-               .getOrElse { Seq[(String,Expression)]() } ++
+               .getOrElse { Seq[(ExprId,Expression)]() } ++
             attributes.toSeq
           )
 
@@ -269,12 +274,12 @@ object EnumeratePlanCaveats
           mergeVerticalSlices(
             rowAndCondition.map { case (row, condition) => 
               ExpressionDependency.attributes(condition, row).toSeq 
-            }.getOrElse { Seq[(String,Expression)]() } ++
+            }.getOrElse { Seq[(ExprId,Expression)]() } ++
             attributes.toSeq
           )
 
-        val isLeft = left.output.map { _.name }.toSet
-        val isRight = right.output.map { _.name }.toSet
+        val isLeft = left.output.map { _.exprId }.toSet
+        val isRight = right.output.map { _.exprId }.toSet
 
         val (attributesToPropagateLeft, attributesToPropagateRight) =
           fieldDependenciesToPropagate.partition { field => isLeft(field._1) }
@@ -283,7 +288,7 @@ object EnumeratePlanCaveats
           row.map { splitAnd(_) }.getOrElse { Seq() }
              .map { pred => 
                 pred -> 
-                  attributesOfExpression(pred).map { _.name }
+                  attributesOfExpression(pred).map { _.exprId }
              }
 
         val itIsSafeToPropagateRow =
@@ -356,7 +361,7 @@ object EnumeratePlanCaveats
           child: LogicalPlan) => 
       {
         val projections =
-          aggregateExpressions.map { agg => agg.name -> agg }
+          aggregateExpressions.map { agg => agg.exprId -> agg }
                               .toMap
 
         // This function inlines attributes in a vertical slice so that they're
@@ -429,7 +434,7 @@ object EnumeratePlanCaveats
         val fieldDependenciesToPropagate =
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
-               .getOrElse { Seq[(String,Expression)]() } ++
+               .getOrElse { Seq[(ExprId,Expression)]() } ++
             attributes.toSeq
           )
 
@@ -453,7 +458,7 @@ object EnumeratePlanCaveats
         val fieldDependenciesToPropagate =
           mergeVerticalSlices(
             row.map { ExpressionDependency.attributes(limitExpr, _).toSeq }
-               .getOrElse { Seq[(String,Expression)]() } ++
+               .getOrElse { Seq[(ExprId,Expression)]() } ++
             attributes.toSeq
           )
 
@@ -489,8 +494,8 @@ object EnumeratePlanCaveats
   }
 
   def mergeVerticalSlices(
-    deps: Seq[(String, Expression)]
-  ): Map[String, Expression] =
+    deps: Seq[(ExprId, Expression)]
+  ): Map[ExprId, Expression] =
     deps.groupBy(_._1)
         .mapValues { deps => foldOr(deps.map { _._2 }.toSeq:_*) }
 }

@@ -53,12 +53,12 @@ object expressionLogic
   }
 
   def inline(e: Expression, projectionList: Seq[NamedExpression]): Expression =
-    inline(e, projectionList.map { expr => expr.name -> expr }.toMap)
+    inline(e, projectionList.map { expr => expr.exprId -> expr }.toMap)
 
-  def inline(e: Expression, replacements: Map[String,Expression]): Expression =
+  def inline(e: Expression, replacements: Map[ExprId,Expression]): Expression =
   {
     e match {
-      case a:Attribute => replacements(a.name)
+      case a:Attribute => replacements(a.exprId)
       case _ => e.mapChildren { inline(_, replacements) }
     }
   }
