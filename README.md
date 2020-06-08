@@ -41,7 +41,7 @@ them.  For example, we could count up the number of errors:
 println(
   df.trackCaveats                    // rewrites the query to track caveats
     .filter { $"reading".hasCaveat } // filter on readings with caveats
-    .groupBy(sanitized("sensor_id"))
+    .groupBy( df("sensor_id") )
     .count()                         // count the number of errors
 )
 ```
