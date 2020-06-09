@@ -6,6 +6,7 @@ import org.apache.spark.unsafe.types.CalendarInterval
 import java.util.{ Base64, Calendar }
 import java.sql.{ Date, Timestamp }
 import scala.util.matching.Regex
+import scala.collection.mutable.ArraySeq
 
 object SparkPrimitive
 {
@@ -95,6 +96,7 @@ object SparkPrimitive
       case LongType             => JsNumber(k.asInstanceOf[Long])
       case ShortType            => JsNumber(k.asInstanceOf[Short])
       case NullType             => JsNull
+      case ArrayType(element,_) => JsArray(k.asInstanceOf[Seq[_]].map { encode(_, element) })
       case _ if k != null       => JsString(k.toString)
       case _                    => JsNull
     }
@@ -118,6 +120,7 @@ object SparkPrimitive
       case LongType             => k.as[Long]
       case ShortType            => k.as[Short]
       case NullType             => JsNull
+      case ArrayType(element,_) => ArraySeq(k.as[Seq[JsValue]].map { decode(_, element) }:_*)
       case _                    => throw new IllegalArgumentException(s"Unsupported type for decode: $t")
     }
   }
