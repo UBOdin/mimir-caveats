@@ -526,7 +526,7 @@ class CaveatExistsInPlan(
           seed: Long,
           child: LogicalPlan) =>
       {
-        ???
+        PASS_THROUGH_CAVEATS
       }
 
       /*********************************************************/

@@ -90,9 +90,9 @@ object ExpressionDependency
   def attributes(
     expr: Expression,
     vSlice: Expression = Literal(true)
-  ): Map[String, Expression] =
-    apply[(String, Expression)](expr, vSlice) { vSlice => {
-      case a:Attribute => a.name -> vSlice
+  ): Map[ExprId, Expression] =
+    apply[(ExprId, Expression)](expr, vSlice) { vSlice => {
+      case a:Attribute => a.exprId -> vSlice
     }}.groupBy { _._1 }
       .mapValues { elems => foldOr(elems.map { _._2 }:_*) }
   

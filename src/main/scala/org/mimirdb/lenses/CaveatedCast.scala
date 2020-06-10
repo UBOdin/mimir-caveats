@@ -13,19 +13,27 @@ object CaveatedCast
     t: DataType, 
     context: String = null, 
     family: Option[String] = None,
-    key: Seq[Expression] = Seq()
+    key: Seq[Expression] = Seq(),
+    tzinfo: Option[String] = None
   ): Expression = {
-    logger.trace(s"CaveatedCast: $expr -> $t")
-    ApplyCaveat(
-      value = Cast(expr, t), 
-      message = Concat(Seq(
-        Literal("Could not cast '"),
-        Coalesce(Seq(Cast(expr, StringType), Literal("'NULL'"))),
-        Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
-      )),
-      family = family,
-      key = key,
-      condition = IsNull(Cast(expr, t))
-    )
+    if(Cast.canUpCast(expr.dataType, t)){
+      // If canUpCast returns true, then this conversion is guaranteed to be loss-less, and the
+      // caveat will never be applied (in which case, we can just return the expression as-is)
+      logger.trace(s"CaveatedCast: $expr -> $t (safe)")
+      return expr
+    } else {
+      logger.trace(s"CaveatedCast: $expr -> $t (caveat needed)")
+      return ApplyCaveat(
+        value = Cast(expr, t, tzinfo), 
+        message = Concat(Seq(
+          Literal("Could not cast '"),
+          Coalesce(Seq(Cast(expr, StringType), Literal("'NULL'"))),
+          Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
+        )),
+        family = family,
+        key = key,
+        condition = And(Not(IsNull(expr)), IsNull(Cast(expr, t)))
+      )
+    }
   }
 }
