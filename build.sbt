@@ -15,6 +15,9 @@ testOptions in Test ++= Seq( Tests.Argument("junitxml"), Tests.Argument("console
 // Auto-reload on edits
 Global / onChangedBuildSource := ReloadOnSourceChanges
 
+// include test classes
+Test / publishArtifact := true
+
 // Specs2 Requirement:
 scalacOptions in Test ++= Seq("-Yrangepos")
 
@@ -26,7 +29,7 @@ resolvers ++= Seq("snapshots", "releases").map(Resolver.sonatypeRepo)
 
 // Custom Dependencies
 libraryDependencies ++= Seq(
-  // Logging 
+  // Logging
   "com.typesafe.scala-logging"    %%  "scala-logging"            % "3.9.2",
   "ch.qos.logback"                %   "logback-classic"          % "1.2.3",
 
@@ -46,7 +49,7 @@ libraryDependencies ++= Seq(
 )
 
 ////// Publishing Metadata //////
-// use `sbt publish make-pom` to generate 
+// use `sbt publish make-pom` to generate
 // a publishable jar artifact and its POM metadata
 
 publishMavenStyle := true
@@ -65,7 +68,7 @@ pomExtra := <url>http://mimirdb.info</url>
   </scm>
 
 /////// Publishing Options ////////
-// use `sbt publish` to update the package in 
+// use `sbt publish` to update the package in
 // your own local ivy cache
 
 publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))

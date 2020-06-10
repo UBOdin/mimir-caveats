@@ -21,6 +21,7 @@ import org.mimirdb.spark.expressionLogic.{
   foldAnd,
   foldOr
 }
+import org.mimirdb.caveats.boundedtypes.BoundedDataType
 
 /**
   * Instrument a [LogicalPlan] to generate and propagate [CaveatRangeType] annotation.
@@ -101,20 +102,22 @@ class CaveatRangePlan()
           in the input.
         */
         val rewrittenChild = tapply(child)
+        val projBounds = projectList.map { e =>
+          {
+            val eB = CaveatRangeExpression(e,None,trace)
+            e.name -> eB
+          }
+        }
+        val bestGuess = projBounds.map( x => renameExpr(x._2.bg,x._1))
+        tlog(s"bestGuess: ${bestGuess}")
         logrewr("PROJECT")
         val annotation =
           buildAnnotation(
             rewrittenChild,
-            colAnnotations =
-              projectList.map { e =>
-                {
-                  val eB = CaveatRangeExpression(e)
-                  e.name -> eB
-                }
-              }
+            colAnnotations = projBounds
           )
         val res = Project(
-          projectList ++ annotation,
+          bestGuess ++ annotation,
           rewrittenChild
         )
         logop(res)
@@ -136,7 +139,7 @@ class CaveatRangePlan()
       {
         val rewrittenChild = tapply(child)
         logrewr("FILTER")
-        val conditionB = CaveatRangeExpression(condition)
+        val conditionB = CaveatRangeExpression(condition,None,trace)
 
         // need to map (Boolean, Booelan, Boolean) of condition to (Int,Int,Int)
         // using False -> 0 and True -> 1
@@ -175,7 +178,7 @@ class CaveatRangePlan()
 
         val leftAbounds: Seq[RangeBoundedExpr[NamedExpression]] = CaveatRangeEncoding
           .getNormalAttributesFromNamedExpressions(left.output)
-          .map(a => CaveatRangeExpression.apply(a)).map { case RangeBoundedExpr(l,b,u) =>
+          .map(a => CaveatRangeExpression(a,None,trace)).map { case RangeBoundedExpr(l,b,u) =>
             RangeBoundedExpr(
               l.asInstanceOf[NamedExpression],
               b.asInstanceOf[NamedExpression],
@@ -187,7 +190,7 @@ class CaveatRangePlan()
         val rightPrefix = "__RIGHT_"
         val rightAbounds = CaveatRangeEncoding
           .getNormalAttributesFromNamedExpressions(right.output)
-          .map(a => CaveatRangeExpression.apply(UnresolvedAttribute(rightPrefix + a.name)))
+          .map(a => CaveatRangeExpression(UnresolvedAttribute(rightPrefix + a.name),None,trace))
         val rightRowBounds = RangeBoundedExpr.fromSeq(CaveatRangeEncoding.rowAnnotationExpressions().map(
           x => UnresolvedAttribute(rightPrefix + x.name)))
 
@@ -283,7 +286,7 @@ class CaveatRangePlan()
 
       case j: Join =>
       {
-          rewriteJoin(j)
+          rewriteJoin(j, trace)
       }
 
       case InsertIntoDir(
@@ -356,6 +359,8 @@ class CaveatRangePlan()
             }
           }
 
+          def capOne(e: Expression): Expression = CaseWhen(Seq((GreaterThan(e,Literal(0)),Literal(1))),Literal(0))
+
           // groupby qggregation?
           val isGroupby = !groupingExpressions.isEmpty
 
@@ -371,7 +376,7 @@ class CaveatRangePlan()
               .makeCertain(Literal(1))
               .rename(CaveatRangeEncoding.rowAnnotationAttrNames())
             val resultExprs = aggregateExpressions
-              .map(CaveatRangeExpression(_))
+              .map(CaveatRangeExpression(_,None,trace))
               .zip(resultRangeNames)
               .map{ case (exprs,names) =>
                 exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => renameExpr(expr, name.name))
@@ -401,7 +406,7 @@ class CaveatRangePlan()
            * group-by values of all tuples belonging to the same BG group.
            */
           val groupingBoundsGrps = groupingExpressions
-          val groupingBnds = groupingExpressions.map ( e => CaveatRangeExpression(e) )
+          val groupingBnds = groupingExpressions.map ( e => CaveatRangeExpression(e,None,trace) )
 
           // renamed grouping attributes
           val renamedGroupByNames = Array.range(0,groupingExpressions.length)
@@ -415,7 +420,7 @@ class CaveatRangePlan()
           val renamedGroupByBoundNames = renamedGroupByNames.map { a => CaveatRangeEncoding.attributeRangeBoundedExpr(a(1)) }
           val mergeGroupbyBoundsExprs = groupingBnds.zip(renamedGroupByNames).map { case (re,name) =>
             RangeBoundedExpr(
-              Alias(wrapAgg(Max(re.lb)),name(0))(),
+              Alias(wrapAgg(Min(re.lb)),name(0))(),
               Alias(re.bg,name(1))(),
               Alias(wrapAgg(Max(re.ub)),name(2))()
             )
@@ -463,25 +468,38 @@ class CaveatRangePlan()
            *       one tuple which belongs to this group in the best guess world
            *     - an upper bound on the maximal multiplicity of the tuple (the
            *       maximum number of groups it represents) is determined by
-           *       assuming that for each range annotated input that could
-           *       belong to the group (overlaps on group-by ranges) each of its
-           *       "duplicates" will end up forming a separate group. For
-           *       instance, grouping on A for { (A: [1,20], B:[3,3]) ->
-           *       [1,2,4], (A: [15,50], B:[3,3]) -> [1,2,5] } a result tuple
-           *       (A:[1,20], ...) may represent up to 9 = 4 + 5 groups.
+           *       assuming that for each range annotated input that is assigned
+           *       to an output group belong to the group (has the same best
+           *       guess group-by values) each of its "duplicates" will end up
+           *       forming a separate group. For instance, grouping on A for {
+           *       (A: [1,16,20], B:[3,3]) -> [1,2,4], (A: [15,16,50],
+           *       B:[3,3]) -> [1,2,5] } a result tuple (A:[1,16,20], ...) may
+           *       represent up to 9 = 4 + 5 groups.
            */
           val rowAnnots =
             RangeBoundedExpr(
               Alias(
-                wrapAgg(Max(CaseWhen(Seq((certainEqual,Literal(1))),Literal(0)))),
+                wrapAgg(Max(
+                  CaseWhen(
+                    Seq((certainEqual,capOne(rowAnnotAtts(0)._1))),
+                    Literal(0)
+                  ))),
                 rowAnnotAtts(0)._2
               )(),
               Alias(
-                wrapAgg(Max(CaseWhen(Seq((bgEqual,Literal(1))),Literal(0)))),
+                wrapAgg(Max(
+                  CaseWhen(
+                    Seq((bgEqual,capOne(rowAnnotAtts(1)._1))),
+                    Literal(0)
+                  ))),
                 rowAnnotAtts(1)._2
               )(),
               Alias(
-                wrapAgg(Sum(rowAnnotAtts(2)._1)),
+                wrapAgg(Sum(
+                  CaseWhen(
+                    Seq((bgEqual,rowAnnotAtts(2)._1)),
+                    Literal(0)
+                  ))),
                 rowAnnotAtts(2)._2
               )()
             )
@@ -500,13 +518,14 @@ class CaveatRangePlan()
            *  expressions (the lower bound and upper bound expressions from the
            *  results of the expression rewrite.
            */
+          tlog("GROUPING PAIRS: " + groupAttrPairs.map{ case (x,y) => x.toString + " => " + y.toString }.mkString("\n"))
           val groupExprToNewNames = groupingExpressions.zip(renamedGroupByBoundNames.map(_.bg)).toMap
           val resultExprs = aggregateExpressions
             .map(replaceGroupByInExpression(_, groupExprToNewNames))
-            .map(CaveatRangeExpression(_))
+            .map(CaveatRangeExpression(_,Some(groupAttrPairs),trace))
             .zip(resultRangeNames)
             .map{ case (exprs,names) =>
-              exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => Alias(expr, name.name)())
+              exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => renameExpr(expr, name.name))
             }.asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
           val resultBestGuess = resultExprs.map(_.bg)
           val resultAttrBounds = resultExprs.map( x=> Seq(x.lb,x.ub) ).flatten
@@ -540,7 +559,7 @@ class CaveatRangePlan()
             colAnnotations =
               projectList.zip(output).map { case(e,a) =>
                 {
-                  val eB = CaveatRangeExpression(e)
+                  val eB = CaveatRangeExpression(e,None,trace)
                   a.name -> eB
                 }
               }
@@ -654,14 +673,15 @@ class CaveatRangePlan()
     *  Dispatch to individual rewriters for join types
     */
   private def rewriteJoin(
-    plan: Join
+    plan: Join,
+    trace: Boolean = false
   ): LogicalPlan =
     plan match {
       case Join(left,right,Cross,c,h) => {
-        rewriteInnerJoin(plan)
+        rewriteInnerJoin(plan,trace)
       }
       case Join(left,right,Inner,c,h) => {
-        rewriteInnerJoin(plan)
+        rewriteInnerJoin(plan,trace)
       }
       case Join(left,right,ExistenceJoin(_),c,h) => { // need to be dealt with separatly?
         ???
@@ -694,7 +714,8 @@ class CaveatRangePlan()
     *  @returns
     */
   private def rewriteInnerJoin(
-    plan: Join
+    plan: Join,
+    trace: Boolean = false
   ): LogicalPlan =
     plan match { case Join(left,right,joinType,condition,hint) =>
       {
@@ -717,13 +738,16 @@ class CaveatRangePlan()
                 CaveatRangeEncoding.rowAnnotationExpressions(RIGHT_ANNOT_PREFIX) ++
                 CaveatRangeEncoding.allAttributeAnnotationsExpressionsFromExpressions(right.output, RIGHT_ANNOT_PREFIX)
                 )
-              .map { case (x,y) => renameExpr(x, y.name) }
+            .map { case (x,y) => renameExpr(x, y.name) }
+        val leftUnresolved = left.output.map(CaveatRangeExpression.unresolveAttrsInExpr(_))
+        val rightUnresolved = right.output.map(CaveatRangeExpression.unresolveAttrsInExpr(_))
+
         val rewrLeft = Project(
-          left.output ++ leftAnnotProjections,
+          leftUnresolved ++ leftAnnotProjections,
           apply(left)
         )
         val rewrRight = Project(
-          right.output ++ rightAnnotProjections,
+          rightUnresolved ++ rightAnnotProjections,
           apply(right)
         )
 
@@ -740,7 +764,7 @@ class CaveatRangePlan()
         ).toMap
 
         // rewrite condition
-        val conditionB = condition.map(CaveatRangeExpression.applynogrp)
+        val conditionB = condition.map(CaveatRangeExpression.applynogrp(_,trace))
 
         // replace references to ANNOTATION_ATTRIBUTE with the left or the right version
         val conditionBadapted = conditionB.map( x => RangeBoundedExpr(
@@ -902,6 +926,9 @@ class CaveatRangePlan()
       case XDB(idAttr, probAttr) => {
         xdbToRange(plan, idAttr, probAttr)
       }
+      case CoddTable() => {
+        coddToRange(plan)
+      }
     }
 
   /**
@@ -932,6 +959,25 @@ class CaveatRangePlan()
 
   def xdbToRange(plan: LogicalPlan, idAttr: String, probAttr: String): LogicalPlan = {
     ???
+  }
+
+  def coddToRange(plan: LogicalPlan): LogicalPlan = {
+    constructAnnotUsingProject(plan,
+      rowAnnotation = RangeBoundedExpr.makeCertain(Literal(1)),
+      colAnnotations = plan.output.map ( a => a.name)
+        .map { a => a -> RangeBoundedExpr.makeCertain(UnresolvedAttribute(a).asInstanceOf[Expression]) },
+      projExprs = plan.output.map{ a =>
+        {
+          //TODO for now we fail if an input data type is not bounded
+          assert(BoundedDataType.isBoundedType(a.dataType))
+          val median = BoundedDataType.domainMinMedianMax(a.dataType)
+          renameExpr(CaseWhen(
+            Seq((IsNull(UnresolvedAttribute(a.name)),Literal(median))),
+            UnresolvedAttribute(a.name)),
+            a.name)
+        }
+      }
+    )
   }
 
   /** Build up a value of the nested annotation attribute from its components.

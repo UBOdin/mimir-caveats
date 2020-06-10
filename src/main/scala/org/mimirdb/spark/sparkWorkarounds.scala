@@ -9,6 +9,10 @@ import org.apache.spark.unsafe.array.ByteArrayMethods
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.BinaryType
+import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.mimirdb.caveats.annotate.CaveatRangeExpression
 
 class DataFrameImplicits(df:DataFrame)
 {
@@ -34,17 +38,122 @@ class DataFrameImplicits(df:DataFrame)
     new DataFrame(df.sparkSession, logicalPlan, RowEncoder(qe.analyzed.schema))
   }
 
+  def castAll(dt: DataType): DataFrame = {
+    df.select(
+      df.schema.fields.map( x => new Column(CaveatRangeExpression.renameExpr(Cast(UnresolvedAttribute(x.name),dt),x.name))):_*
+    )
+  }
+
+  def toShowString(
+    _numRows: Int = 10,
+    truncate: Int = 20,
+    vertical: Boolean = false): String =
+  {
+    SparkHelpers.toShowString(df, _numRows, truncate, vertical)
+  }
+
+  def showWithIntermediateResults(
+    _numRows: Int = 10,
+    truncate: Int = 20
+  ) = {
+    println(toShowStringWithIntermediateResults(df,_numRows,truncate))
+  }
+
+  def toShowStringWithIntermediateResults(
+    _numRows: Int = 10,
+    truncate: Int = 20
+  ): String =
+  {
+    toShowStringWithIntermediateResults(df,_numRows,truncate)
+  }
+
+  def toShowStringWithIntermediateResults(
+    d: DataFrame,
+    _numRows: Int,
+    truncate: Int
+  ): String =
+  {
+    val children = d.queryExecution.analyzed.children
+    val showStr = SparkHelpers.toShowString(d,_numRows,truncate)
+    "================================================================================\n                                        QUERY\n================================================================================\n" +
+    d.queryExecution.analyzed.toString() +
+    "\n================================================================================\n                                        RESULT\n================================================================================\n" +
+    showStr +
+    children.map{ x =>
+      toShowStringWithIntermediateResults(
+        SparkHelpers.planToDF(x,d.sparkSession),
+        _numRows,
+        truncate)
+    }.mkString("\n")
+  }
+
+
+  def castValuesAsStrings(): DataFrame  = {
+    SparkHelpers.castDFValuesAsStrings(df)
+    // val castCols = df.queryExecution.logical.output.map { col =>
+    //   // Since binary types in top-level schema fields have a specific format to print,
+    //   // so we do not cast them to strings here.
+    //   if (col.dataType == BinaryType) {
+    //     new Column(col)
+    //   } else {
+    //     new Column(col).cast(StringType)
+    //   }
+    // }
+    // df.select(castCols: _*)
+  }
+
+
+}
+
+object sparkWorkarounds
+{
+  implicit def DataFrameToMimirDataFrame(df:DataFrame) =
+    new DataFrameImplicits(df)
+}
+
+object SparkHelpers
+{
+
+  def getStringRows(
+      df: DataFrame,
+      numRows: Int,
+      truncate: Int): Seq[Seq[String]] = {
+    val newDf = df.toDF()
+    val data = SparkHelpers.castDFValuesAsStrings(df).take(numRows + 1)
+
+    // For array values, replace Seq and Array with square brackets
+    // For cells that are beyond `truncate` characters, replace it with the
+    // first `truncate-3` and "..."
+    df.schema.fieldNames.toSeq +: data.map { row =>
+      row.toSeq.map { cell =>
+        val str = cell match {
+          case null => "null"
+          case binary: Array[Byte] => binary.map("%02X".format(_)).mkString("[", " ", "]")
+          case _ => cell.toString
+        }
+        if (truncate > 0 && str.length > truncate) {
+          // do not show ellipses for strings shorter than 4 characters.
+          if (truncate < 4) str.substring(0, truncate)
+          else str.substring(0, truncate - 3) + "..."
+        } else {
+          str
+        }
+      }: Seq[String]
+    }
+  }
+
   /**
     * copied useful private methods and made them available under different name for our convenience.
     */
   def toShowString(
+    df: DataFrame,
     _numRows: Int = 10,
     truncate: Int = 20,
     vertical: Boolean = false): String =
   {
     val numRows = _numRows.max(0).min(ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH - 1)
     // Get rows represented by Seq[Seq[String]], we may get one more line if it has more data.
-    val tmpRows = getStringRows(numRows, truncate)
+    val tmpRows = getStringRows(df, numRows, truncate)
 
     val hasMoreData = tmpRows.length - 1 > numRows
     val rows = tmpRows.take(numRows + 1)
@@ -126,56 +235,6 @@ class DataFrameImplicits(df:DataFrame)
     sb.toString()
   }
 
-  def castValuesAsStrings(): DataFrame  = {
-    SparkHelpers.castDFValuesAsStrings(df)
-    // val castCols = df.queryExecution.logical.output.map { col =>
-    //   // Since binary types in top-level schema fields have a specific format to print,
-    //   // so we do not cast them to strings here.
-    //   if (col.dataType == BinaryType) {
-    //     new Column(col)
-    //   } else {
-    //     new Column(col).cast(StringType)
-    //   }
-    // }
-    // df.select(castCols: _*)
-  }
-
-  def getStringRows(
-      numRows: Int,
-      truncate: Int): Seq[Seq[String]] = {
-    val newDf = df.toDF()
-    val data = SparkHelpers.castDFValuesAsStrings(df).take(numRows + 1)
-
-    // For array values, replace Seq and Array with square brackets
-    // For cells that are beyond `truncate` characters, replace it with the
-    // first `truncate-3` and "..."
-    df.schema.fieldNames.toSeq +: data.map { row =>
-      row.toSeq.map { cell =>
-        val str = cell match {
-          case null => "null"
-          case binary: Array[Byte] => binary.map("%02X".format(_)).mkString("[", " ", "]")
-          case _ => cell.toString
-        }
-        if (truncate > 0 && str.length > truncate) {
-          // do not show ellipses for strings shorter than 4 characters.
-          if (truncate < 4) str.substring(0, truncate)
-          else str.substring(0, truncate - 3) + "..."
-        } else {
-          str
-        }
-      }: Seq[String]
-    }
-  }
-}
-
-object sparkWorkarounds
-{
-  implicit def DataFrameToMimirDataFrame(df:DataFrame) =
-    new DataFrameImplicits(df)
-}
-
-object SparkHelpers
-{
 
   def planToDF(plan: LogicalPlan, sparkSession: SparkSession): DataFrame = {
     val qe = sparkSession.sessionState.executePlan(plan)

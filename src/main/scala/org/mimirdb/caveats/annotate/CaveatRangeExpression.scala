@@ -22,6 +22,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Average
 import org.apache.spark.sql.catalyst.expressions.codegen.TrueLiteral
+import spire.syntax.group
 
 case class RangeBoundedExpr[T <: Expression](lb: T, bg: T, ub: T)
 {
@@ -122,7 +123,7 @@ object RangeBoundedExpr
 object CaveatRangeExpression
   extends LazyLogging
 {
-    def applynogrp[T <: Expression](expr: T) = apply(expr)
+    def applynogrp[T <: Expression](expr: T,trace: Boolean = false) = apply(expr,None,trace)
 
   /**
    * Derive an expression to compute the annotation of the input expression
@@ -132,9 +133,14 @@ object CaveatRangeExpression
    **/
   def apply[T <: Expression](
     expr: T,
-    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[NamedExpression])]] = None)
-      : RangeBoundedExpr[Expression] =
+    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[Expression])]] = None,
+    trace: Boolean = false
+  ): RangeBoundedExpr[Expression] =
   {
+    def tlog(message: String) = { if (trace) { println(message) } }
+
+    tlog(s"----------------------------------------\nEXPR: $expr\nGB: $groupByAttrPairs\ntrace: $trace")
+
     // Derive a triple of conditions that calculates that lower bound, original expression, and upper bound for the
     // value of the expression across all possible worlds.
     expr match {
@@ -146,8 +152,9 @@ object CaveatRangeExpression
       case l: Literal => RangeBoundedExpr.makeCertain(l)
 
       // Attributes are caveatted if they are caveated in the input.
-      case a: Attribute => RangeBoundedExpr(CaveatRangeEncoding.attrLBexpression(a.name),
-        CaveatRangeEncoding.attrBGexpression(a),
+      case a: Attribute => RangeBoundedExpr(
+        CaveatRangeEncoding.attrLBexpression(a.name),
+        CaveatRangeEncoding.attrBGexpression(a.name),
         CaveatRangeEncoding.attrUBexpression(a.name)
       )
 
@@ -156,27 +163,27 @@ object CaveatRangeExpression
 
       // comparison operators
       case EqualTo(left,right) => {
-        val l = apply(left)
-        val r = apply(right)
+        val l = apply(left,groupByAttrPairs,trace)
+        val r = apply(right,groupByAttrPairs,trace)
 
         RangeBoundedExpr(
           And(EqualTo(l.lb,r.ub),EqualTo(l.ub,r.lb)),
-          expr,
+          EqualTo(l.bg,r.bg),
           And(LessThanOrEqual(l.lb,r.ub),LessThanOrEqual(r.lb,l.ub))
         )
       }
 
-      case op:LessThanOrEqual => liftOrderComparison(op)
-      case op:LessThan => liftOrderComparison(op)
-      case op:GreaterThanOrEqual => liftOrderComparison(op)
-      case op:GreaterThan => liftOrderComparison(op)
+      case op:LessThanOrEqual => liftOrderComparison(op,groupByAttrPairs,trace)
+      case op:LessThan => liftOrderComparison(op,groupByAttrPairs,trace)
+      case op:GreaterThanOrEqual => liftOrderComparison(op,groupByAttrPairs,trace)
+      case op:GreaterThan => liftOrderComparison(op,groupByAttrPairs,trace)
 
       // Arithemic
-      case Add(left,right) => liftPointwise(expr)
+      case Add(left,right) => liftPointwise(expr,groupByAttrPairs,trace)
 
       case Subtract(left,right) => {
-        val l = apply(left)
-        val r = apply(right)
+        val l = apply(left,groupByAttrPairs,trace)
+        val r = apply(right,groupByAttrPairs,trace)
 
         RangeBoundedExpr(Subtract(l.lb,r.ub),expr,Subtract(l.ub,r.lb))
       }
@@ -188,9 +195,9 @@ object CaveatRangeExpression
       // conditional operators
       case If(predicate, thenClause, elseClause) =>
         {
-          val cav_predicate = apply(predicate)
-          val cav_then = apply(thenClause)
-          val cav_else = apply(elseClause)
+          val cav_predicate = apply(predicate,groupByAttrPairs,trace)
+          val cav_then = apply(thenClause,groupByAttrPairs,trace)
+          val cav_else = apply(elseClause,groupByAttrPairs,trace)
           val certainTrue = RangeBoundedExpr.isCertainTrue(cav_predicate)
           val certainFalse = RangeBoundedExpr.isCertainFalse(cav_predicate)
 
@@ -208,7 +215,7 @@ object CaveatRangeExpression
               // if predicate result is uncertain the take the minimum of then and else lower bounds
               Least(Seq(cav_then.lb, cav_else.lb))
             ),
-            expr,
+            If(cav_predicate.bg, cav_then.bg, cav_else.bg),
             // symmetric to lower bound
             CaseWhen(
               Seq(
@@ -223,30 +230,25 @@ object CaveatRangeExpression
           )
         }
 
-        // We have to compute the min / max across all outcomes for all clauses
-        // The only exception is if for a prefix of clauses all predicates
-        // evaluate to certainly false followed by one clause predicate which is
-        // certainly true (or there is an else clause). We have to test for each
-        // such prefix. We do this by nesting, e.g., if the first clause's predicate
-        // is certainly false, then we use another level of CaseWhen to test whether
-        // the next predicate is certainly false or true. This way we avoid potentially
-        // an factor n (number of clauses) blow-up in the size of predicates
+      /**
+        * We have to compute the min / max across all outcomes for all clauses
+        * The only exception is if for a prefix of clauses all predicates
+        * evaluate to certainly false followed by one clause predicate which is
+        * certainly true (or there is an else clause). We have to test for each
+        * such prefix. We do this by nesting, e.g., if the first clause's
+        * predicate is certainly false, then we use another level of CaseWhen to
+        * test whether the next predicate is certainly false or true. This way we
+        * avoid potentially an factor n (number of clauses) blow-up in the size
+        * of predicates.
+        */
       case cas: CaseWhen => whenCases(cas)
 
-      //   val casesB = whenCases(branches :: els)
-      //   (
-      //     casesB._1,
-      //     CaseWhen(branches, otherwise),
-      //     casesB._2
-      //   )
-      // }
-
       /* logical operators */
-      case Not(child) => apply(child).applyIndividuallyToBounds(x => Not(x.ub), x => Not(x.bg), x => Not(x.lb))
+      case Not(child) => apply(child,groupByAttrPairs,trace).applyIndividuallyToBounds(x => Not(x.ub), x => Not(x.bg), x => Not(x.lb))
 
-      case And(lhs, rhs) => liftPointwise(expr)
+      case And(lhs, rhs) => liftPointwise(expr,groupByAttrPairs,trace)
 
-      case Or(lhs, rhs) => liftPointwise(expr)
+      case Or(lhs, rhs) => liftPointwise(expr,groupByAttrPairs,trace)
 
       //TODO what about distinct does this require extra treatment?
       //TODO are there any aggregation function for which the bounding expressions are not an aggregation function?
@@ -260,7 +262,7 @@ object CaveatRangeExpression
         resultId) =>
         {
           def rewriteOneAgg(agg: AggregateFunction): RangeBoundedExpr[Expression] =
-            apply(agg).map(x =>
+            apply(agg,groupByAttrPairs,trace).map(x =>
               AggregateExpression(
                 x.asInstanceOf[AggregateFunction],
                 mode,
@@ -291,12 +293,14 @@ object CaveatRangeExpression
         val g = groupByAttrPairs
         val hasGroups = g match { case Some(h) => true case None => false }
 
-        // checks whether tuple should be counted int the best guess world (if it certainly belongs to a group). For aggregation without groupby this is always the case.
+        // checks whether tuple should be counted int the best guess world (if it belongs to a group in the BGW). For aggregation without groupby this is always the case.
         val bgEquals: Expression = g match {
           case Some(gb) => foldAnd(gb.map{ case (l,r) => EqualTo(l.bg,r.bg) }:_*)
           case None => Literal(true)
         }
 
+        tlog(s"===========> BG EQUALS: $bgEquals")
+        tlog(s"GROUP BY: $groupByAttrPairs")
         // check whether tuple certainly belongs to a group (its group-by values are certain and it certainly exists: row.lb > 0)
         val certainGrpMember = g match {
           case Some(gb) =>
@@ -327,9 +331,9 @@ object CaveatRangeExpression
                   {
                     val s:Sum = agg.asInstanceOf[Sum]
                     (
-                      apply(e).applyIndividuallyToBounds(
+                      apply(e,groupByAttrPairs,trace).applyIndividuallyToBounds(
                         x => Multiply(x.lb,CaseWhen(Seq((LessThan(x.lb,Literal(0)),r.ub)),r.lb)),
-                        x => x.bg,
+                        x => Multiply(x.bg,r.bg),
                         x => Multiply(x.ub,CaseWhen(Seq((GreaterThan(x.ub,Literal(0)),r.ub)),r.lb)),
                       ),
                       Literal.default(s.dataType)
@@ -338,23 +342,23 @@ object CaveatRangeExpression
                   case Min(e) => {
                     val s:Min = agg.asInstanceOf[Min]
                     (
-                      apply(e),
+                      apply(e,groupByAttrPairs,trace),
                       Literal.create(null,s.dataType)
                     )
                   }
                   case Max(e) => {
                     val s:Max = agg.asInstanceOf[Max]
                     (
-                      apply(e),
+                      apply(e,groupByAttrPairs,trace),
                       Literal.create(null,s.dataType)
                     )
                   }
                   case _ => throw new Exception(s"Unsupported aggregation function $agg")
                 }
-                // if group membership is uncertain then take least/greatest of A * row and the neutral element of the aggregation function and apply aggregation function to the result
+                // if group membership is uncertain then take least/greatest of A * row and the neutral element of the aggregation function and apply aggregation function to the result. For best guess we should only aggregate over tuples that exist in the BGW
                 aggbounds._1.applyIndividually(
                   lb => CaseWhen(Seq((certainGrpMember,lb)),Least(Seq(aggbounds._2,lb))),
-                  bg => bg,
+                  bg => CaseWhen(Seq((bgEquals,bg)),aggbounds._2),
                   ub => CaseWhen(Seq((certainGrpMember,ub)),Greatest(Seq(aggbounds._2,ub)))
                 ).map{ x =>
                   agg match {
@@ -362,6 +366,9 @@ object CaveatRangeExpression
                     case Min(e) => Min(x)
                     case Max(e) => Max(x)
                   }
+                }.map{ x =>
+                  tlog(x.sql)
+                  x
                 }
                   .asInstanceOf[RangeBoundedExpr[Expression]]
           }
@@ -369,19 +376,34 @@ object CaveatRangeExpression
       }
 
       // works for and / or  too
-      case _ => liftPointwise(expr)
+      case _ => liftPointwise(expr,groupByAttrPairs,trace)
     }
   }
 
+  // unresolve attribute references in expressions
+  def unresolveAttrsInExpr(e: NamedExpression): NamedExpression = e match {
+    case AttributeReference(name,dt,nullable,metadata) => UnresolvedAttribute(name)
+    case _ => e.withNewChildren(e.children.map(unresolveAttrsInExpr(_))).asInstanceOf[NamedExpression]
+  }
+
+  def unresolveAttrsInExpr(e: Expression): Expression = e match {
+    case AttributeReference(name,dt,nullable,metadata) => UnresolvedAttribute(name)
+    case _ => e.withNewChildren(e.children.map(unresolveAttrsInExpr(_)))
+  }
+
   // lift to (lub,rlb) and (llb,rub)
-  def liftOrderComparison(op: BinaryExpression) : RangeBoundedExpr[Expression] = {
+  def liftOrderComparison(
+    op: BinaryExpression,
+    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[Expression])]] = None,
+    trace: Boolean = false
+  ) : RangeBoundedExpr[Expression] = {
     val (left,right) = (op.children(0), op.children(1))
-    val l = apply(left)
-    val r = apply(right)
+    val l = apply(left,groupByAttrPairs,trace)
+    val r = apply(right,groupByAttrPairs,trace)
 
     RangeBoundedExpr(
       op.withNewChildren(Seq(l.ub,r.lb)),
-      op,
+      op.withNewChildren(Seq(l.bg,r.bg)),
       op.withNewChildren(Seq(l.lb,r.ub))
     )
   }
@@ -389,8 +411,8 @@ object CaveatRangeExpression
   //TODO should not duplicate names!
   def preserveName(expr: NamedExpression): RangeBoundedExpr[NamedExpression] =
   {
-    val e = apply(expr)
-    RangeBoundedExpr(Alias(e.lb, expr.name)(), Alias(e.bg, expr.name)(), Alias(e.ub, expr.name)())
+    val e = apply(expr,None,false)
+    RangeBoundedExpr(renameExpr(e.lb, expr.name), renameExpr(e.bg, expr.name), renameExpr(e.ub, expr.name))
   }
 
   def renameExpr(e: Expression, name: String): NamedExpression =
@@ -443,13 +465,16 @@ object CaveatRangeExpression
   //           (certainfalse(p1) (CASE WHEN (certaintrue(p2) LB(o2))
   //                              ...
   //           least(LB(o1), (CASE WHEN (certaintrue(p2) ...
-  private def whenCases(when: CaseWhen): RangeBoundedExpr[Expression] =
+  private def whenCases(when: CaseWhen,
+    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[Expression])]] = None,
+    trace: Boolean = false
+  ): RangeBoundedExpr[Expression] =
     when match {
       case CaseWhen(Seq(), None) => null
       // a single when then clause
       case CaseWhen(Seq((pred, outcome)), None) => {
-        val predB = apply(pred)
-        val outcomeB = apply(outcome)
+        val predB = apply(pred,groupByAttrPairs,trace)
+        val outcomeB = apply(outcome,groupByAttrPairs,trace)
         // if when is not resolved then we cannot determine result types and cannot select the right values
         assert(when.resolved)
         val resultDT = when.dataType
@@ -461,7 +486,9 @@ object CaveatRangeExpression
             ),
             Some(Literal(BoundedDataType.domainMin(resultDT)))
           ),
-          when,
+          CaseWhen(
+            Seq((predB.bg, outcomeB.bg))
+          ),
           CaseWhen(
             Seq(
               (RangeBoundedExpr.isCertainTrue(predB), predB.ub)
@@ -472,13 +499,13 @@ object CaveatRangeExpression
       }
       // an else clause only
       case CaseWhen(Seq(), Some(els)) => {
-            val elsB = apply(els)
-            RangeBoundedExpr( elsB.lb, els, elsB.ub )
+            val elsB = apply(els,groupByAttrPairs,trace)
+            RangeBoundedExpr( elsB.lb, elsB.bg, elsB.ub )
           }
       case CaseWhen((pred, outcome) +: otherClauses, els) => {
         val otherBounds = whenCases(CaseWhen(otherClauses, els))
-        val predB = apply(pred)
-        val outcomeB = apply(outcome)
+        val predB = apply(pred,groupByAttrPairs,trace)
+        val outcomeB = apply(outcome,groupByAttrPairs,trace)
 
         RangeBoundedExpr(
           CaseWhen(
@@ -488,7 +515,7 @@ object CaveatRangeExpression
             ),
             Least(Seq(outcomeB.lb, otherBounds.lb))
           ),
-          when,
+          CaseWhen(Seq((predB.bg, outcomeB.bg)), otherBounds.bg),
           CaseWhen(
             Seq(
               (RangeBoundedExpr.isCertainTrue(predB), outcomeB.ub),
@@ -502,14 +529,18 @@ object CaveatRangeExpression
 
   // calculate bounds as the min/max over all combinations of applying the
   // operator to lower/upper bound of left and right input
-  private def minMaxAcrossAllCombinations(e: BinaryExpression): RangeBoundedExpr[Expression] = {
+  private def minMaxAcrossAllCombinations(
+    e: BinaryExpression,
+    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[Expression])]] = None,
+    trace: Boolean = false
+  ): RangeBoundedExpr[Expression] = {
     val (left,right) = (e.children(0), e.children(1))
-    val l = apply(left)
-    val r = apply(right)
+    val l = apply(left,groupByAttrPairs,trace)
+    val r = apply(right,groupByAttrPairs,trace)
 
     RangeBoundedExpr(
       Least(Seq(e.withNewChildren(Seq(l.lb,r.lb)),e.withNewChildren(Seq(l.lb,r.ub)),e.withNewChildren(Seq(l.ub,r.lb)),e.withNewChildren(Seq(l.ub,r.ub)))),
-      e,
+      e.withNewChildren(Seq(l.bg,r.bg)),
       Greatest(Seq(e.withNewChildren(Seq(l.lb,r.lb)),e.withNewChildren(Seq(l.lb,r.ub)),e.withNewChildren(Seq(l.ub,r.lb)),e.withNewChildren(Seq(l.ub,r.ub))))
     )
   }
@@ -521,12 +552,17 @@ object CaveatRangeExpression
       case _ => Not(e)
     }
 
-  def liftPointwise(e:Expression): RangeBoundedExpr[Expression] =
+  def liftPointwise(
+    e:Expression,
+    groupByAttrPairs: Option[Seq[(RangeBoundedExpr[NamedExpression],RangeBoundedExpr[Expression])]] = None,
+    trace: Boolean = false
+  ): RangeBoundedExpr[Expression] =
   {
-      val caveatedChildren = e.children.map { apply(_) }
-      RangeBoundedExpr(e.withNewChildren(caveatedChildren.map(x => x.lb)),
-        e.withNewChildren(caveatedChildren.map(x => x.bg)),
-        e.withNewChildren(caveatedChildren.map(x => x.ub))
-      )
+    val caveatedChildren = e.children.map { apply(_,groupByAttrPairs,trace) }
+    RangeBoundedExpr(
+      e.withNewChildren(caveatedChildren.map(x => x.lb)),
+      e.withNewChildren(caveatedChildren.map(x => x.bg)),
+      e.withNewChildren(caveatedChildren.map(x => x.ub))
+    )
   }
 }

@@ -8,7 +8,9 @@ import org.mimirdb.caveats._
 import org.mimirdb.caveats.annotate.{
   AnnotationException,
   CaveatExistsInExpression,
-  CaveatRangePlan
+  CaveatRangePlan,
+  CaveatRange,
+  ApplyCaveatRange
 }
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.annotate.CaveatExists
@@ -43,12 +45,97 @@ class ColumnImplicits(col: Column)
 
   def hasCaveat: Column =
     new Column(CaveatExistsInExpression(col.expr))
+
+  def rangeCaveat(message: String, lb: Column, ub: Column): Column =
+    rangeCaveat(lit(message), lb, ub)
+
+  def rangeCaveat(message: Column, lb: Column, ub: Column): Column =
+    new Column(ApplyCaveatRange(
+      value = col.expr,
+      lb = lb.expr,
+      ub = ub.expr,
+      message = message.expr)
+    )
+
+  def rangeCaveat(message: Column, family: String, lb: Column, ub: Column)(key: Column*): Column =
+    new Column(ApplyCaveatRange(
+      value = col.expr,
+      lb = lb.expr,
+      ub = ub.expr,
+      message = message.cast(StringType).expr,
+      family = Some(family),
+      key = key.map { _.expr }
+    ))
+
+  def rangeCaveatIf(message: String, lb: Column, ub: Column, condition: Column): Column =
+    rangeCaveatIf(lit(message), lb, ub, condition)
+
+  def rangeCaveatIf(message: Column, lb: Column, ub: Column, condition: Column): Column =
+    new Column(ApplyCaveatRange.cond(
+      value = col.expr,
+      lb = lb.expr,
+      ub = ub.expr,
+      message = message.expr,
+      condition = condition.expr
+    ))
+
+
+  def rangeCaveatIf(message: Column, family: String, lb: Column, ub: Column, condition: Column)(key: Column*): Column = {
+    new Column(ApplyCaveatRange.cond(
+      value = col.expr,
+      lb = lb.expr,
+      ub = ub.expr,
+      message = message.cast(StringType).expr,
+      family = Some(family),
+      key = key.map { _.expr },
+      condition = condition.expr
+    ))
+  }
+
+  def replaceAndRangeCaveat(message: Column, replacement: Column, lb: Column, ub: Column, condition: Column): Column = {
+    new Column(CaseWhen(
+      Seq(
+        (
+          condition.expr,
+          ApplyCaveatRange(
+            value = replacement.expr,
+            lb = lb.expr,
+            ub = ub.expr,
+            message = message.cast(StringType).expr
+          )
+        )
+      ),
+      col.expr
+    )
+    )
+  }
+
+  def replaceAndRangeCaveat(message: Column, replacement: Column, lb: Column, ub: Column, condition: Column, family:String)(key: Column *): Column = {
+    new Column(CaseWhen(
+      Seq(
+        (
+          condition.expr,
+          ApplyCaveatRange(
+            value = replacement.expr,
+            lb = lb.expr,
+            ub = ub.expr,
+            message = message.cast(StringType).expr,
+            family = Some(family),
+            key = key.map { _.expr },
+          )
+        )
+      ),
+      col.expr
+    )
+    )
+  }
+
 }
 
 class DataFrameImplicits(df:DataFrame)
 {
   def trackCaveats = Caveats.annotate(df, CaveatExists())
-  def rangeCaveats = Caveats.annotate(df, CaveatRangeStrategy())
+  def trackRangeCaveats = Caveats.annotate(df, CaveatRangeStrategy())
   def uncertainToAnnotation(
     model: UncertaintyModel,
     annotationType: AnnotationInstrumentationStrategy,

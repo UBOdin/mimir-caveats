@@ -105,16 +105,17 @@ object CaveatRangeEncoding
 
   // get all attribute annotations
   def allAttributeAnnotationsExpressions(baseSchema: StructType, annotation: String = ANNOTATION_ATTRIBUTE): Seq[NamedExpression] =
-    baseSchema.fields.flatMap{ x =>
+  {
+    allAttributeAnnotationsExpressionsFromExpressions(baseSchema.fields.map(x => UnresolvedAttribute(x.name)))
+  }
+
+  override def allAttributeAnnotationsExpressionsFromExpressions(baseSchema: Seq[NamedExpression], prefix: String = ANNOTATION_ATTRIBUTE): Seq[NamedExpression] =
+    baseSchema.flatMap{ x =>
       Seq(
-        UnresolvedAttribute(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, annotation)),
-        UnresolvedAttribute(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, annotation))
+        UnresolvedAttribute(addAnnotPrefix(x.name, LOWER_BOUND_FIELD, prefix)),
+        UnresolvedAttribute(addAnnotPrefix(x.name, UPPER_BOUND_FIELD, prefix))
       )
     }
-
-  override def allAttributeAnnotationsExpressionsFromExpressions(baseSchema: Seq[NamedExpression], prefix: String = ANNOTATION_ATTRIBUTE): Seq[NamedExpression] = {
-    allAttributeAnnotationsExpressions(StructType(baseSchema.map(x => StructField(x.name, x.dataType))), prefix)
-  }
 
   // get access to annotation of an individual attribute
   def attributeAnnotationExpressions(
@@ -171,8 +172,7 @@ object CaveatRangeEncoding
   ): Expression =
     attributeAnnotationExpressions(attrName, annotation)(0)
 
-  def attrBGexpression(a: Attribute): Expression =
-    a //TODO do we want this to work like this?
+  def attrBGexpression(attrName: String): Expression = UnresolvedAttribute(attrName)
 
   def attrUBexpression(attrName: String,
     annotation: String = ANNOTATION_ATTRIBUTE
