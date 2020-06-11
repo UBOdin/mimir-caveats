@@ -23,3 +23,10 @@ branches:
 script:
   - sbt ++$TRAVIS_SCALA_VERSION test
 
+notifications:
+    webhooks:
+        urls:
+            - "https://scalar.vector.im/api/neb/services/hooks/dHJhdmlzLWNpLyU0MHh0aGVtYWdlJTNBc3luYXBzZS54dGhlbWFnZS5uZXQvJTIxdnZndW1PcXNTRXRRRUpvSEJ1JTNBY2hhdC5vZGluLmNzZS5idWZmYWxvLmVkdQ"
+        on_success: always  # always|never|change
+        on_failure: always
+        on_start: always
