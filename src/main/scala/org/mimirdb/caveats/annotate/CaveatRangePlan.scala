@@ -22,6 +22,7 @@ import org.mimirdb.spark.expressionLogic.{
   foldOr
 }
 import org.mimirdb.caveats.boundedtypes.BoundedDataType
+import org.mimirdb.utility.GenericObjectPrinter
 
 /**
   * Instrument a [LogicalPlan] to generate and propagate [CaveatRangeType] annotation.
@@ -389,6 +390,11 @@ class CaveatRangePlan()
               resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds,
               rewrittenChild
             )
+
+            // tlog("RESULTS\n---------------------\n" +  (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( GenericObjectPrinter.pprint(_)).mkString("\n\n"))
+            // tlog("GROUP BY\n-------------------\n" + groupingExpressions.map( _.treeString).mkString("\n\n"))
+            // tlog("RESULTS\n-------------------\n" + (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( _.treeString).mkString("\n\n"))
+
             logop(agg)
             return agg
           }
@@ -529,6 +535,9 @@ class CaveatRangePlan()
             }.asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
           val resultBestGuess = resultExprs.map(_.bg)
           val resultAttrBounds = resultExprs.map( x=> Seq(x.lb,x.ub) ).flatten
+
+          tlog("GROUP BY\n-------------------\n" + resultBestGuess.map( _.treeString).mkString("\n\n"))
+          tlog("RESULTS\n-------------------\n" + (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( _.treeString).mkString("\n\n"))
 
           val agg = Aggregate(
             groupByExprs,

@@ -2,10 +2,33 @@ package org.mimirdb.utility
 
 import scala.reflect.runtime.{universe => ru}
 import scala.collection.mutable.Set
-import java.lang.module.ModuleDescriptor.Modifier
+import java.lang.reflect.Modifier
 
 object GenericObjectPrinter {
 
+  def pprint(obj: Any, depth: Int = 0, paramName: Option[String] = None): Unit = {
+
+    val indent = "  " * depth
+    val prettyName = paramName.fold("")(x => s"$x: ")
+
+    if (obj == null) {
+      println(s"$indent${prettyName}null")
+    }
+    else {
+    val ptype = obj match { case _: Iterable[Any] => "" case obj: Product => obj.productPrefix case _ => obj.toString }
+
+    println(s"$indent$prettyName$ptype")
+
+    obj match {
+      case seq: Iterable[Any] =>
+        seq.foreach(pprint(_, depth + 1))
+      case obj: Product =>
+        (obj.productIterator zip Range(0,obj.productArity).iterator)
+          .foreach { case (subObj, paramPos) => pprint(subObj, depth + 1, Some("Attr" + paramPos)) }
+      case _ =>
+    }
+    }
+  }
 
   def reflectiveToString(o: Object): String = {
     val str =  new StringBuilder()

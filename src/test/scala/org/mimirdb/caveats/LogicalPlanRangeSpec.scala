@@ -1,4 +1,3 @@
-
 package org.mimirdb.caveats
 
 
@@ -7,6 +6,7 @@ import org.specs2.mutable.Specification
 
 import org.apache.log4j.{ Level, Logger }
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions._
@@ -49,8 +49,9 @@ class LogicalPlanRangeSpec
       println("\n============================== SCHEMA ==============================\n")
       println(s"${d.schema}")
       println("\n============================== RESULT ==============================\n")
-      d.show(30,100)
+      //d.show(30,100)
       d.showWithIntermediateResults(30,100)
+      d.explain() // ("codegen")
     }
   }
 
@@ -352,9 +353,9 @@ class LogicalPlanRangeSpec
 //  , trace = true
         )
 
-        skipped("agg rewrite not correct yet!")
+        skipped("avg agg rewrite not correct yet!")
         annotBagEqualToDF(
-          dfr.agg(avg($"A").as("X")),
+          dfr.agg(avg($"A").as("X")).select($"X"),
 """
 +----+----------------+----------------+----------------+--------------+--------------+
 |   X|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_X_LB|__CAVEATS_X_UB|
@@ -363,7 +364,7 @@ class LogicalPlanRangeSpec
 |               1|               1|               1|          1.71428571429|          1.71428571429|
 +----+----------------+----------------+----------------+--------------+--------------+
 """
-// , trace = true
+ , trace = true
         )
 
       }
@@ -817,11 +818,11 @@ class LogicalPlanRangeSpec
 
       "Caveated inputs.aggregation without group-by" >> {
 
-        skipped("agg rewrite not correct yet!")
+        //skipped("agg rewrite not correct yet!")
         annotBagEqualToDF(
           dfr.select(
             $"A".cast("int").as("A").rangeCaveatIf(lit("oh noooooo!"), lit(0), lit(10), $"A" < 2).as("X")
-          ),
+          ).agg(sum($"X").as("S")),
 """
 +---+----------------+----------------+----------------+--------------+--------------+
 |  S|__CAVEATS_ROW_LB|__CAVEATS_ROW_BG|__CAVEATS_ROW_UB|__CAVEATS_S_LB|__CAVEATS_S_UB|
@@ -851,7 +852,7 @@ class LogicalPlanRangeSpec
 
       "Caveated inputs.aggregation with group-by" >> {
 
-        skipped("agg rewrite not correct yet!")
+        //skipped("agg rewrite not correct yet!")
         annotBagEqualToDF(
           dfr.select(
             $"A".cast("int").as("A").rangeCaveatIf(lit("oh noooooo!"), lit(0), lit(10), $"A" < 2).as("X"),
@@ -863,7 +864,7 @@ class LogicalPlanRangeSpec
 +---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
 |  3|  1|               1|               1|               1|             3|             3|             0|            12|
 |  4|  1|               1|               1|               1|             4|             4|             0|            12|
-|  2| 10|               0|               1|               5|             1|            10|             2|            24|
+|  2| 10|               0|               1|               5|             1|            10|             0|            48|
 +---+---+----------------+----------------+----------------+--------------+--------------+--------------+--------------+
 """
 // , trace = true
