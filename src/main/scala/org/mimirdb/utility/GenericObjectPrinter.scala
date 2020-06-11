@@ -2,7 +2,6 @@ package org.mimirdb.utility
 
 import scala.reflect.runtime.{universe => ru}
 import scala.collection.mutable.Set
-import java.lang.module.ModuleDescriptor.Modifier
 
 object GenericObjectPrinter {
 
