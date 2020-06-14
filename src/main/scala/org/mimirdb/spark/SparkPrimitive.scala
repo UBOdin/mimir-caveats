@@ -103,24 +103,25 @@ object SparkPrimitive
   }
   def decode(k: JsValue, t: DataType): Any = 
   {
-    t match {  
-      case StringType           => k.as[String]
-      case BinaryType           => base64Decode(k.as[String])
-      case BooleanType          => k.as[Boolean]
-      case DateType             => decodeDate(k.as[String])
-      case TimestampType        => decodeTimestamp(k.as[String])
-      case CalendarIntervalType => {
+    (k, t) match {  
+      case (JsNull, _)               => null
+      case (_, StringType)           => k.as[String]
+      case (_, BinaryType)           => base64Decode(k.as[String])
+      case (_, BooleanType)          => k.as[Boolean]
+      case (_, DateType)             => decodeDate(k.as[String])
+      case (_, TimestampType)        => decodeTimestamp(k.as[String])
+      case (_, CalendarIntervalType) => {
         val fields = k.as[Map[String,JsValue]]
         new CalendarInterval(fields("months").as[Int], fields("days").as[Int], fields("microseconds").as[Int])
       }
-      case DoubleType           => k.as[Double]
-      case FloatType            => k.as[Float]
-      case ByteType             => k.as[Byte]
-      case IntegerType          => k.as[Int]:Integer
-      case LongType             => k.as[Long]
-      case ShortType            => k.as[Short]
-      case NullType             => JsNull
-      case ArrayType(element,_) => ArraySeq(k.as[Seq[JsValue]].map { decode(_, element) }:_*)
+      case (_, DoubleType)           => k.as[Double]
+      case (_, FloatType)            => k.as[Float]
+      case (_, ByteType)             => k.as[Byte]
+      case (_, IntegerType)          => k.as[Int]:Integer
+      case (_, LongType)             => k.as[Long]
+      case (_, ShortType)            => k.as[Short]
+      case (_, NullType)             => JsNull
+      case (_, ArrayType(element,_)) => ArraySeq(k.as[Seq[JsValue]].map { decode(_, element) }:_*)
       case _                    => throw new IllegalArgumentException(s"Unsupported type for decode: $t")
     }
   }
