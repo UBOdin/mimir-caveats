@@ -64,240 +64,240 @@ class LogicalPlanExistsSpec
 
   "DataFrame Annotations" >> {
 
-    // "support simple operators without caveats" >> {
-    //   annotate(
-    //     dfr.select()
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false, false, false, false, false))
-    //   }
+    "support simple operators without caveats" >> {
+      annotate(
+        dfr.select()
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false, false, false, false, false, false))
+      }
 
-    //   annotate(
-    //     dfr.filter { $"A" =!= 1 }
-    //   ) { result =>
-    //       result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //   }
-    // }
+      annotate(
+        dfr.filter { $"A" =!= 1 }
+      ) { result =>
+          result.map { _._1 } must be equalTo(Seq(false, false, false))
+      }
+    }
 
-    // "support aggregates without caveats" >> {
-    //   annotate(
-    //     dfr.select( sum($"A") )
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false))
-    //   }
-    //   annotate(
-    //     dfr.select( $"A", $"B".cast("int").as("B") )
-    //       .groupBy($"A").sum("B")
-    //     // ,trace = true
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //   }
-    // }
+    "support aggregates without caveats" >> {
+      annotate(
+        dfr.select( sum($"A") )
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false))
+      }
+      annotate(
+        dfr.select( $"A", $"B".cast("int").as("B") )
+          .groupBy($"A").sum("B")
+        // ,trace = true
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false, false))
+      }
+    }
 
-    // "support order by/limit without caveats" >> {
-    //   annotate(
-    //     dfr.sort( $"A" )
-    //       .limit(2)
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false))
-    //     result.map { _._2("B") } must be equalTo(Seq(false, false))
-    //   }
+    "support order by/limit without caveats" >> {
+      annotate(
+        dfr.sort( $"A" )
+          .limit(2)
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false))
+        result.map { _._2("B") } must be equalTo(Seq(false, false))
+      }
 
-    //   annotate(
-    //     dfr.select( $"A", $"B".cast("int").as("B"))
-    //       .groupBy($"A").agg( sum($"B").as("B") )
-    //       .sort( $"B".desc )
-    //       .limit(1)
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false))
-    //     result.map { _._2("A") } must be equalTo(Seq(false))
-    //   }
-    // }
+      annotate(
+        dfr.select( $"A", $"B".cast("int").as("B"))
+          .groupBy($"A").agg( sum($"B").as("B") )
+          .sort( $"B".desc )
+          .limit(1)
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false))
+        result.map { _._2("A") } must be equalTo(Seq(false))
+      }
+    }
 
-    // "support projection with caveats" >> {
-    //   annotate(
-    //     dfr.limit(3)
-    //       .select( $"A".caveat("An Issue!").as("A"), $"B" )
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //     result.map { _._2("A") } must be equalTo(Seq(true, true, true))
-    //     result.map { _._2("B") } must be equalTo(Seq(false, false, false))
-    //   }
-    //   annotate(
-    //     dfr.limit(3)
-    //       .select(
-    //         when($"A" === 1, $"A".caveat("A=1"))
-    //           .otherwise($"A").as("A"),
-    //         $"B"
-    //       )
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //     result.map { _._2("A") } must be equalTo(Seq(true, true, false))
-    //     result.map { _._2("B") } must be equalTo(Seq(false, false, false))
-    //   }
-    // }
+    "support projection with caveats" >> {
+      annotate(
+        dfr.limit(3)
+          .select( $"A".caveat("An Issue!").as("A"), $"B" )
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false, false))
+        result.map { _._2("A") } must be equalTo(Seq(true, true, true))
+        result.map { _._2("B") } must be equalTo(Seq(false, false, false))
+      }
+      annotate(
+        dfr.limit(3)
+          .select(
+            when($"A" === 1, $"A".caveat("A=1"))
+              .otherwise($"A").as("A"),
+            $"B"
+          )
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false, false))
+        result.map { _._2("A") } must be equalTo(Seq(true, true, false))
+        result.map { _._2("B") } must be equalTo(Seq(false, false, false))
+      }
+    }
 
-    // "support selection with caveats" >> {
-    //   annotate(
-    //     dfr.filter { ($"A" === 1).caveat("Is this right?") }
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(true, true, true, true))
-    //     result.map { _._2("A") } must be equalTo(Seq(false, false, false, false))
-    //   }
+    "support selection with caveats" >> {
+      annotate(
+        dfr.filter { ($"A" === 1).caveat("Is this right?") }
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(true, true, true, true))
+        result.map { _._2("A") } must be equalTo(Seq(false, false, false, false))
+      }
 
-    //   annotate(
-    //     dfr.select(
-    //       when($"B" === 2, $"B".caveat("Huh?"))
-    //         .otherwise($"B").as("B"),
-    //       $"A"
-    //     ).filter { $"B" =!= 3 }
-    //      .limit(3)
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(true, true, false))
-    //     result.map { _._2("A") } must be equalTo(Seq(false, false, false))
-    //     result.map { _._2("B") } must be equalTo(Seq(true, true, false))
-    //   }
-    // }
+      annotate(
+        dfr.select(
+          when($"B" === 2, $"B".caveat("Huh?"))
+            .otherwise($"B").as("B"),
+          $"A"
+        ).filter { $"B" =!= 3 }
+         .limit(3)
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(true, true, false))
+        result.map { _._2("A") } must be equalTo(Seq(false, false, false))
+        result.map { _._2("B") } must be equalTo(Seq(true, true, false))
+      }
+    }
 
-    // "support aggregation with caveats" >> {
-    //   annotate(
-    //     dfr.select(
-    //       $"A", $"B",
-    //       when($"C" === 1, $"C".caveat("Sup."))
-    //         .otherwise($"C").as("C")
-    //     ).groupBy("A")
-    //      .agg( sum($"C").as("C") )
-    //      .sort($"A")
-    //   ) { result =>
-    //     result.map { _._1 } must be equalTo(Seq(false, false, false))
-    //     result.map { _._2("A") } must be equalTo(Seq(false, false, false))
-    //     result.map { _._2("C") } must be equalTo(Seq(true, true, false))
-    //   }
+    "support aggregation with caveats" >> {
+      annotate(
+        dfr.select(
+          $"A", $"B",
+          when($"C" === 1, $"C".caveat("Sup."))
+            .otherwise($"C").as("C")
+        ).groupBy("A")
+         .agg( sum($"C").as("C") )
+         .sort($"A")
+      ) { result =>
+        result.map { _._1 } must be equalTo(Seq(false, false, false))
+        result.map { _._2("A") } must be equalTo(Seq(false, false, false))
+        result.map { _._2("C") } must be equalTo(Seq(true, true, false))
+      }
 
-    //   annotate(
-    //     dfr.select(
-    //       $"A", $"B",
-    //       when($"C" === 1, $"C".caveat("Dude."))
-    //         .otherwise($"C").as("C")
-    //     ).filter { $"C" <= 3 }
-    //      .groupBy("A")
-    //      .agg( sum($"C").as("C") )
-    //      .sort($"A")
-    //     // ,trace=true
-    //   ) { result =>
-    //     // 1,2,3
-    //     // 1,3,1* !
-    //     // 1,2,
-    //     // 1,4,2
-    //     //   `----> 1, 6*
-    //     // 2, ,1* !
-    //     // 2,2,1* !
-    //     //   `----> 2, 2* !
-    //     //X4X2X4XX <- removed by filter
+      annotate(
+        dfr.select(
+          $"A", $"B",
+          when($"C" === 1, $"C".caveat("Dude."))
+            .otherwise($"C").as("C")
+        ).filter { $"C" <= 3 }
+         .groupBy("A")
+         .agg( sum($"C").as("C") )
+         .sort($"A")
+        // ,trace=true
+      ) { result =>
+        // 1,2,3
+        // 1,3,1* !
+        // 1,2,
+        // 1,4,2
+        //   `----> 1, 6*
+        // 2, ,1* !
+        // 2,2,1* !
+        //   `----> 2, 2* !
+        //X4X2X4XX <- removed by filter
 
 
-    //     result.map { _._1 } must be equalTo(Seq(false, true))
-    //     result.map { _._2("A") } must be equalTo(Seq(false, false))
-    //     result.map { _._2("C") } must be equalTo(Seq(true, true))
-    //   }
+        result.map { _._1 } must be equalTo(Seq(false, true))
+        result.map { _._2("A") } must be equalTo(Seq(false, false))
+        result.map { _._2("C") } must be equalTo(Seq(true, true))
+      }
 
-    //   annotate(
-    //     dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
-    //       .select(
-    //         $"A",
-    //         when($"B" === 2, $"B".caveat("Dude."))
-    //           .otherwise($"B").as("B"),
-    //         when($"C" === 1, $"C".caveat("Dude."))
-    //           .otherwise($"C").as("C")
-    //       )
-    //       .filter { $"B" > 1 }
-    //       .groupBy("C")
-    //       .agg( sum($"A").as("A") )
-    //       .sort($"C")
-    //     // ,trace = true
-    //   ) { result =>
-    //     // 1,2*,x  !
-    //     //   `----> x, 1* !
-    //     // 1,3 ,1*
-    //     // 2,  ,1*
-    //     // 2,2*,1* !
-    //     //   `----> 1, 3* !
-    //     // 1,4 ,2
-    //     //   `----> 2, 1*
-    //     // 1,2*,3  !
-    //     //   `----> 3, 1* !
-    //     // 4,2*,4  !
-    //     //   `----> 4, 4* !
-    //     result.map { _._1 } must be equalTo(Seq(true, true, false, true, true))
-    //     result.map { _._2("A") } must be equalTo(Seq(true, true, true, true, true))
+      annotate(
+        dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
+          .select(
+            $"A",
+            when($"B" === 2, $"B".caveat("Dude."))
+              .otherwise($"B").as("B"),
+            when($"C" === 1, $"C".caveat("Dude."))
+              .otherwise($"C").as("C")
+          )
+          .filter { $"B" > 1 }
+          .groupBy("C")
+          .agg( sum($"A").as("A") )
+          .sort($"C")
+        // ,trace = true
+      ) { result =>
+        // 1,2*,x  !
+        //   `----> x, 1* !
+        // 1,3 ,1*
+        // 2,  ,1*
+        // 2,2*,1* !
+        //   `----> 1, 3* !
+        // 1,4 ,2
+        //   `----> 2, 1*
+        // 1,2*,3  !
+        //   `----> 3, 1* !
+        // 4,2*,4  !
+        //   `----> 4, 4* !
+        result.map { _._1 } must be equalTo(Seq(true, true, false, true, true))
+        result.map { _._2("A") } must be equalTo(Seq(true, true, true, true, true))
 
-    //     // skipping the following test due to limitations of Spark's aggregate
-    //     // representation: distinguishing group-by fragments of an attribute
-    //     // from the rest is painful, so "C" is going to unfortunately get
-    //     // attribute-annotated as well.
-    //     // result.map { _._2("C") } must be equalTo(Seq(false, false, false, false, false))
-    //   }
+        // skipping the following test due to limitations of Spark's aggregate
+        // representation: distinguishing group-by fragments of an attribute
+        // from the rest is painful, so "C" is going to unfortunately get
+        // attribute-annotated as well.
+        // result.map { _._2("C") } must be equalTo(Seq(false, false, false, false, false))
+      }
 
-    //   annotate(
-    //     dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
-    //       .select(
-    //         $"A",
-    //         when($"B" === 2, $"B".caveat("Dude."))
-    //           .otherwise($"B").as("B"),
-    //         when($"C" === 1, $"C".caveat("Dude."))
-    //           .otherwise($"C").as("C")
-    //       )
-    //       .filter { $"B" > 1 }
-    //       .groupBy("C")
-    //       .agg( sum($"A").as("A") )
-    //       .sort($"C"),
-    //     pedantic = false
-    //     // ,trace = true
-    //   ) { result =>
-    //     // 1,2*,x  !
-    //     //   `----> x, 1* !
-    //     // 1,3 ,1*
-    //     // 2,  ,1*
-    //     // 2,2*,1* !
-    //     //   `----> 1, 3* !
-    //     // 1,4 ,2
-    //     //   `----> 2, 1
-    //     // 1,2*,3  !
-    //     //   `----> 3, 1* !
-    //     // 4,2*,4  !
-    //     //   `----> 4, 4* !
+      annotate(
+        dfr.select($"A".cast("int"), $"B".cast("int"), $"C".cast("int"))
+          .select(
+            $"A",
+            when($"B" === 2, $"B".caveat("Dude."))
+              .otherwise($"B").as("B"),
+            when($"C" === 1, $"C".caveat("Dude."))
+              .otherwise($"C").as("C")
+          )
+          .filter { $"B" > 1 }
+          .groupBy("C")
+          .agg( sum($"A").as("A") )
+          .sort($"C"),
+        pedantic = false
+        // ,trace = true
+      ) { result =>
+        // 1,2*,x  !
+        //   `----> x, 1* !
+        // 1,3 ,1*
+        // 2,  ,1*
+        // 2,2*,1* !
+        //   `----> 1, 3* !
+        // 1,4 ,2
+        //   `----> 2, 1
+        // 1,2*,3  !
+        //   `----> 3, 1* !
+        // 4,2*,4  !
+        //   `----> 4, 4* !
 
-    //     // pedantry shouldn't affect the row-annotations
-    //     result.map { _._1 } must be equalTo(Seq(true, true, false, true, true))
-    //     // but we should get back clean results for the one row that could
-    //     // only be affected by a record in another group sneaking in
-    //     result.map { _._2("A") } must be equalTo(Seq(true, true, false, true, true))
-    //   }
-    // }
+        // pedantry shouldn't affect the row-annotations
+        result.map { _._1 } must be equalTo(Seq(true, true, false, true, true))
+        // but we should get back clean results for the one row that could
+        // only be affected by a record in another group sneaking in
+        result.map { _._2("A") } must be equalTo(Seq(true, true, false, true, true))
+      }
+    }
 
-    // "Support Annotation Re-Use" >>  {
-    //   val base = Caveats.annotate(
-    //     dfr.select($"A".caveat("HI!").as("A"))
-    //   )
+    "Support Annotation Re-Use" >>  {
+      val base = Caveats.annotate(
+        dfr.select($"A".caveat("HI!").as("A"))
+      )
 
-    //   annotate(
-    //     base
-    //   ) { result =>
-    //     result.size must beGreaterThan(1)
-    //     val (row, fields) = result(0)
-    //     fields("A") must be equalTo(true)
-    //     row must beFalse
-    //   } 
+      annotate(
+        base
+      ) { result =>
+        result.size must beGreaterThan(1)
+        val (row, fields) = result(0)
+        fields("A") must be equalTo(true)
+        row must beFalse
+      } 
 
-    //   annotate(
-    //     base.filter(base("A") === 4)
-    //   ) { result =>
-    //     result.size must be equalTo(1)
-    //     val (row, fields) = result(0)
-    //     fields("A") must be equalTo(true)
-    //     row must beTrue
-    //   } 
+      annotate(
+        base.filter(base("A") === 4)
+      ) { result =>
+        result.size must be equalTo(1)
+        val (row, fields) = result(0)
+        fields("A") must be equalTo(true)
+        row must beTrue
+      } 
 
-    // }
+    }
 
     "support order by/limit with caveats" >> {
       annotate(
