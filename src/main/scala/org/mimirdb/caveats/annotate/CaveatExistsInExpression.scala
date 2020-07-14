@@ -230,7 +230,7 @@ class CaveatExistsInExpression(
       // attribute annotation.
       /////////////////////////////////////////////////////////////////////////
       case AggregateExpression(
-        aggFn, mode, isDistinct, resultId
+        aggFn, mode, isDistinct, filter, resultId
       ) =>
       {
         // For now, we do something blatantly simple: The aggregate value is

@@ -259,6 +259,7 @@ object CaveatRangeExpression
         aggregateFunction,
         mode,
         isDistinct,
+        filter,
         _) =>
         {
           def rewriteOneAgg(agg: AggregateFunction): RangeBoundedExpr[Expression] =
@@ -267,6 +268,7 @@ object CaveatRangeExpression
                 x.asInstanceOf[AggregateFunction],
                 mode,
                 isDistinct,
+                filter,
                 )
             )
 
