@@ -353,7 +353,10 @@ class LogicalPlanRangeSpec
 //  , trace = true
         )
 
-        skipped("avg agg rewrite not correct yet!")
+      }
+
+      "certain inputs.aggregation - no group-by - avg" >> {
+        skipped("avg agg rewrite not working yet!")
         annotBagEqualToDF(
           dfr.agg(avg($"A").as("X")).select($"X"),
 """
@@ -364,9 +367,8 @@ class LogicalPlanRangeSpec
 |               1|               1|               1|          1.71428571429|          1.71428571429|
 +----+----------------+----------------+----------------+--------------+--------------+
 """
- , trace = true
+  // , trace = true
         )
-
       }
 
       "certain inputs.aggregation - no group-by - with expressions" >> {
@@ -818,7 +820,6 @@ class LogicalPlanRangeSpec
 
       "Caveated inputs.aggregation without group-by" >> {
 
-        //skipped("agg rewrite not correct yet!")
         annotBagEqualToDF(
           dfr.select(
             $"A".cast("int").as("A").rangeCaveatIf(lit("oh noooooo!"), lit(0), lit(10), $"A" < 2).as("X")
@@ -852,7 +853,6 @@ class LogicalPlanRangeSpec
 
       "Caveated inputs.aggregation with group-by" >> {
 
-        //skipped("agg rewrite not correct yet!")
         annotBagEqualToDF(
           dfr.select(
             $"A".cast("int").as("A").rangeCaveatIf(lit("oh noooooo!"), lit(0), lit(10), $"A" < 2).as("X"),

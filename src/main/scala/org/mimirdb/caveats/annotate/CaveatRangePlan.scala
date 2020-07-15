@@ -23,6 +23,7 @@ import org.mimirdb.spark.expressionLogic.{
 }
 import org.mimirdb.caveats.boundedtypes.BoundedDataType
 import org.mimirdb.utility.GenericObjectPrinter
+import org.mimirdb.utility.SparkTreePrinter
 
 /**
   * Instrument a [LogicalPlan] to generate and propagate [CaveatRangeType] annotation.
@@ -381,9 +382,13 @@ class CaveatRangePlan()
               .zip(resultRangeNames)
               .map{ case (exprs,names) =>
                 exprs.applyToPairs(names, (expr:Expression,name:NamedExpression) => renameExpr(expr, name.name))
-              }.asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
-            val resultBestGuess = resultExprs.map(_.bg)
-            val resultAttrBounds = resultExprs.map( x=> Seq(x.lb,x.ub) ).flatten
+              }
+            val resultWithFresh =
+              resultExprs
+              .map( r => r.map(CaveatRangeExpression.withFreshExprIDs(_, trace)) )
+              .asInstanceOf[Seq[RangeBoundedExpr[NamedExpression]]]
+            val resultBestGuess = resultWithFresh.map(_.bg)
+            val resultAttrBounds = resultWithFresh.map( x=> Seq(x.lb,x.ub) ).flatten
 
             val agg = Aggregate(
               groupingExpressions,
@@ -391,9 +396,10 @@ class CaveatRangePlan()
               rewrittenChild
             )
 
-            // tlog("RESULTS\n---------------------\n" +  (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( GenericObjectPrinter.pprint(_)).mkString("\n\n"))
-            // tlog("GROUP BY\n-------------------\n" + groupingExpressions.map( _.treeString).mkString("\n\n"))
-            // tlog("RESULTS\n-------------------\n" + (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( _.treeString).mkString("\n\n"))
+            //tlog("RESULTS\n---------------------\n" +  resultExprs.map( x => SparkTreePrinter.toPrettyJSON(x.bg)).mkString("\n\n"))
+            tlog("RESULTS\n---------------------\n" +  resultBestGuess.map( SparkTreePrinter.toPrettyJSON(_)).mkString("\n\n"))
+            //tlog("GROUP BY\n-------------------\n" + groupingExpressions.map( _.treeString).mkString("\n\n"))
+            //tlog("RESULTS\n-------------------\n" + (resultBestGuess ++ rowAnnots.toSeq() ++ resultAttrBounds).map( _.treeString).mkString("\n\n"))
 
             logop(agg)
             return agg
@@ -443,8 +449,8 @@ class CaveatRangePlan()
             rewrittenChild
           )
 
-          tlog(s"""GROUP BY:\n----------------------------------------\nORIGINAL GROUP-BY: $groupingBoundsGrps \nBOUNDED EXPRESSIONS: $groupingBnds""")
-          tlog("GROUP BY RENAMED: " + renamedGroupByNames.map(x => x.mkString("(",",",")")).mkString("\n"))
+          // tlog(s"""GROUP BY:\n----------------------------------------\nORIGINAL GROUP-BY: $groupingBoundsGrps \nBOUNDED EXPRESSIONS: $groupingBnds""")
+          // tlog("GROUP BY RENAMED: " + renamedGroupByNames.map(x => x.mkString("(",",",")")).mkString("\n"))
 
           // join grouping bounds with input
           val joinCond = foldAnd(groupAttrPairs.map { case (newg, g) => newg.overlaps(g) }:_*)

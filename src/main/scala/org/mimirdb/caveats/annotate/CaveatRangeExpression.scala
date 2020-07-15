@@ -267,6 +267,7 @@ object CaveatRangeExpression
                 x.asInstanceOf[AggregateFunction],
                 mode,
                 isDistinct,
+                NamedExpression.newExprId
                 )
             )
 
@@ -299,8 +300,6 @@ object CaveatRangeExpression
           case None => Literal(true)
         }
 
-        tlog(s"===========> BG EQUALS: $bgEquals")
-        tlog(s"GROUP BY: $groupByAttrPairs")
         // check whether tuple certainly belongs to a group (its group-by values are certain and it certainly exists: row.lb > 0)
         val certainGrpMember = g match {
           case Some(gb) =>
@@ -551,6 +550,31 @@ object CaveatRangeExpression
       case Literal(x, BooleanType) => Literal(!x.asInstanceOf[Boolean])
       case _ => Not(e)
     }
+
+  def withFreshExprIDs(e: Expression, trace: Boolean = false): Expression =
+  {
+    def tlog(message: String) = { if (trace) { println(message) } }
+
+    tlog(e.getClass.getName + "@" + System.identityHashCode(e) + ": " + e.toString() )
+    e match {
+      case AggregateExpression(
+        aggregateFunction,
+        mode,
+        isDistinct,
+        resultId
+      ) => {
+        val newId = NamedExpression.newExprId
+        tlog(s"REPLACE $resultId with $newId")
+        AggregateExpression(
+          withFreshExprIDs(aggregateFunction).asInstanceOf[AggregateFunction],
+          mode,
+          isDistinct,
+          newId)
+      }
+      case CaseWhen(branches,els) => CaseWhen(branches.map{ case (x,y) => (withFreshExprIDs(x), withFreshExprIDs(y)) }, els.map(withFreshExprIDs(_)))
+      case _ => e.withNewChildren(e.children.map( x => withFreshExprIDs(x,trace)))
+    }
+  }
 
   def liftPointwise(
     e:Expression,
