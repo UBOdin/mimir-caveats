@@ -8,12 +8,12 @@ import org.apache.spark.sql.catalyst.plans.{ JoinType, Cross }
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
 import org.apache.spark.sql.types.BooleanType
-
 import com.typesafe.scalalogging.LazyLogging
 
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.Constants._
+import org.mimirdb.lenses.CaveatedDeduplicate
 import org.mimirdb.spark.expressionLogic.{
   foldOr,
   foldAnd,
@@ -566,7 +566,7 @@ class CaveatExistsInPlan(
       /*********************************************************/
       case Deduplicate(keys: Seq[Attribute], child: LogicalPlan) =>
       {
-        ???
+        annotate(CaveatedDeduplicate(keys, child))
       }
 
       /*********************************************************/

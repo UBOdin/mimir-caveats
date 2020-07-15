@@ -299,5 +299,24 @@ class LogicalPlanExistsSpec
 
     }
 
+    "support order by/limit with caveats" >> {
+      annotate(
+        dfr.select(  $"A".caveatIf("HI!", $"A" === 2 ).as("A"), $"B" )
+          .sort( $"A" )
+          .limit(5)
+      ) { result =>
+        // These are just the baseline annotations as a sanity check.  If these are wrong, 
+        // then the limit on r.csv is returning a different subset of records than expected
+        result.map { _._2("A") } must be equalTo(Seq(false, false, false, false, true))
+        result.map { _._2("B") } must be equalTo(Seq(false, false, false, false, false))
+
+        // We expect that the row annotations should contain at least one true.  Technically
+        // all of the one records (the first four rows) can be safely marked false, but the 
+        // annotation scheme isn't quite that clever (yet)
+        result.map { _._1 } must contain(true)
+        // result.map { _._1 } must be equalTo(Seq(false, false, false, false, true))
+      }
+    }
+
   }
 }

@@ -3,6 +3,7 @@ package org.mimirdb.caveats
 import org.apache.spark.sql.{ DataFrame, SparkSession }
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.mimirdb.spark.sparkWorkarounds._
 import org.mimirdb.spark.expressionLogic.negate
@@ -46,5 +47,16 @@ class EnumerableCaveatSet(
     withContext(ctx) { _.collect.map { Caveat(family, _) } }
   def isEmpty(ctx: SparkSession) = 
     withContext(ctx) { _.isEmpty }
-  def isEmptyExpression = Exists(plan)
+
+  // Exists would be fantastic to use here, but unfortunately Spark doesn't like Exists in 
+  // projections.  To work around, compare to 0
+  def isEmptyExpression = 
+    EqualTo(
+      ScalarSubquery(
+        Aggregate(Seq(), Seq(
+          Alias(Count(Seq(Literal(1))).toAggregateExpression(false), "num_caveats")()
+        ), plan)
+      ),
+      Literal(0)
+    )
 }

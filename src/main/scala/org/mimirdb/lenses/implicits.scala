@@ -3,6 +3,8 @@ package org.mimirdb.lenses
 import org.apache.spark.sql.{ Column, DataFrame }
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.mimirdb.spark.sparkWorkarounds._
 
 class ColumnImplicits(col:Column)
 {
@@ -34,8 +36,30 @@ class ColumnImplicits(col:Column)
     new Column(CaveatedMerge(col.expr, other.expr))
 }
 
+class DataFrameImplicits(df:DataFrame)
+{
+  def deduplicateWithCaveats(keys: Seq[String], context: String = "") = 
+  {
+    val plan = 
+      CaveatedDeduplicate(
+        keys.map { df(_).expr }.map { 
+          case a:Attribute => a
+          case a => throw new RuntimeException(s"Expected $a to be an attribute")
+        },
+        df.queryExecution.analyzed,
+        context
+      )
+    df.planToDF(plan)
+  }
+}
+
 object implicits
 {
   implicit def columnImplicits(col: Column): ColumnImplicits =
     new ColumnImplicits(col)
+  implicit def dataFrameImplicits(df: DataFrame): DataFrameImplicits =
+    new DataFrameImplicits(df)
+
 }
+
+

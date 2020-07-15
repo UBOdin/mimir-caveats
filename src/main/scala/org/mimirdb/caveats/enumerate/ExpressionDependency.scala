@@ -68,7 +68,7 @@ class ExpressionDependency[T]
                                       .getOrElse { Seq() }
       }
 
-      case AggregateExpression(fn, _, _, _) => apply(fn, vSlice, true)
+      case AggregateExpression(fn, _, _, _, _) => apply(fn, vSlice, true)
 
       case _ => expr.children.flatMap { apply(_, vSlice, inAgg) } 
 

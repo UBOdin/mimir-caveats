@@ -19,4 +19,8 @@ class SparkPrimitiveSpec
     val decoded = SparkPrimitive.decode(encoded, t)
     decoded must beEqualTo(data)
   }
+
+  "Decode Nulls" >> {
+    SparkPrimitive.decode(JsNull, StringType) must beNull
+  }
 }

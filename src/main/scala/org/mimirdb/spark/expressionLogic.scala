@@ -47,6 +47,7 @@ object expressionLogic
             Sum(foldIf(e){ Literal(1) }{ Literal(0) }),
             Complete,
             false,
+            None,
             NamedExpression.newExprId
           ),
           Literal(0)
@@ -58,6 +59,7 @@ object expressionLogic
       e,
       Complete,
       distinct,
+      None,
       NamedExpression.newExprId
     )
   }

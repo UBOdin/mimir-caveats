@@ -1,5 +1,5 @@
 name := "mimir-caveats"
-version := "0.1-SNAPSHOT"
+version := "0.2-SNAPSHOT"
 organization := "org.mimirdb"
 scalaVersion := "2.12.10"
 
@@ -39,9 +39,9 @@ libraryDependencies ++= Seq(
   "org.specs2"                    %%  "specs2-junit"             % "4.8.2" % "test",
 
   // Spark
-  "org.apache.spark"              %%  "spark-sql"                % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
-  "org.apache.spark"              %%  "spark-mllib"              % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
-  "org.apache.spark"              %%  "spark-hive"               % "3.0.0-preview2" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
+  "org.apache.spark"              %%  "spark-sql"                % "3.0.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
+  "org.apache.spark"              %%  "spark-mllib"              % "3.0.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
+  "org.apache.spark"              %%  "spark-hive"               % "3.0.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
   "org.apache.hadoop"             %   "hadoop-client"            % "2.8.2" excludeAll(ExclusionRule(organization ="org.slf4j", name = "slf4j-log4j12"), ExclusionRule("com.fasterxml.jackson.core")),
 
   // Play JSON
