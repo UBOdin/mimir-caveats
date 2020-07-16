@@ -3,6 +3,7 @@ package org.mimirdb.spark
 import play.api.libs.json._
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.sql.catalyst.expressions.{ Literal, Cast }
 import java.util.{ Base64, Calendar }
 import java.sql.{ Date, Timestamp }
 import scala.util.matching.Regex
@@ -101,27 +102,28 @@ object SparkPrimitive
       case _                    => JsNull
     }
   }
-  def decode(k: JsValue, t: DataType): Any = 
+  def decode(k: JsValue, t: DataType, castStrings: Boolean = false): Any = 
   {
     (k, t) match {  
-      case (JsNull, _)               => null
-      case (_, StringType)           => k.as[String]
-      case (_, BinaryType)           => base64Decode(k.as[String])
-      case (_, BooleanType)          => k.as[Boolean]
-      case (_, DateType)             => decodeDate(k.as[String])
-      case (_, TimestampType)        => decodeTimestamp(k.as[String])
-      case (_, CalendarIntervalType) => {
+      case (JsNull, _)                    => null
+      case (_, StringType)                => k.as[String]
+      case (_:JsString, _) if castStrings => Cast(Literal(k.as[String]), t).eval()
+      case (_, BinaryType)                => base64Decode(k.as[String])
+      case (_, BooleanType)               => k.as[Boolean]
+      case (_, DateType)                  => decodeDate(k.as[String])
+      case (_, TimestampType)             => decodeTimestamp(k.as[String])
+      case (_, CalendarIntervalType)      => {
         val fields = k.as[Map[String,JsValue]]
         new CalendarInterval(fields("months").as[Int], fields("days").as[Int], fields("microseconds").as[Int])
       }
-      case (_, DoubleType)           => k.as[Double]
-      case (_, FloatType)            => k.as[Float]
-      case (_, ByteType)             => k.as[Byte]
-      case (_, IntegerType)          => k.as[Int]:Integer
-      case (_, LongType)             => k.as[Long]
-      case (_, ShortType)            => k.as[Short]
-      case (_, NullType)             => JsNull
-      case (_, ArrayType(element,_)) => ArraySeq(k.as[Seq[JsValue]].map { decode(_, element) }:_*)
+      case (_, DoubleType)                => k.as[Double]
+      case (_, FloatType)                 => k.as[Float]
+      case (_, ByteType)                  => k.as[Byte]
+      case (_, IntegerType)               => k.as[Int]:Integer
+      case (_, LongType)                  => k.as[Long]
+      case (_, ShortType)                 => k.as[Short]
+      case (_, NullType)                  => JsNull
+      case (_, ArrayType(element,_))      => ArraySeq(k.as[Seq[JsValue]].map { decode(_, element) }:_*)
       case _                    => throw new IllegalArgumentException(s"Unsupported type for decode: $t")
     }
   }
