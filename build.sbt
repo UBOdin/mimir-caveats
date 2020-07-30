@@ -12,9 +12,6 @@ cancelable in Global := true
 // Produce Machine-Readable JUnit XML files for tests
 testOptions in Test ++= Seq( Tests.Argument("junitxml"), Tests.Argument("console") )
 
-// Auto-reload on edits
-Global / onChangedBuildSource := ReloadOnSourceChanges
-
 // include test classes
 Test / publishArtifact := true
 
