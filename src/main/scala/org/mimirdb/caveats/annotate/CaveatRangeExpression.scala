@@ -72,7 +72,6 @@ case class RangeBoundedExpr[T <: Expression](lb: T, bg: T, ub: T)
 
 object RangeBoundedExpr
 {
-
   def makeCertain[T <: Expression](e: T): RangeBoundedExpr[T] = RangeBoundedExpr[T](e,e,e)
   def fromBounds[T <: Expression](lb: T, ub: T): RangeBoundedExpr[Expression] = RangeBoundedExpr(lb,Literal(1),ub)
   def fromTuple[T <: Expression](t: (T,T,T)): RangeBoundedExpr[T] = RangeBoundedExpr(t._1,t._2,t._3)
@@ -267,8 +266,8 @@ object CaveatRangeExpression
               AggregateExpression(
                 x.asInstanceOf[AggregateFunction],
                 mode,
-                isDistinct,
-                NamedExpression.newExprId
+                isDistinct //,
+//                NamedExpression.newExprId
                 )
             )
 
@@ -562,6 +561,7 @@ object CaveatRangeExpression
         aggregateFunction,
         mode,
         isDistinct,
+        filter,
         resultId
       ) => {
         val newId = NamedExpression.newExprId
@@ -569,8 +569,9 @@ object CaveatRangeExpression
         AggregateExpression(
           withFreshExprIDs(aggregateFunction).asInstanceOf[AggregateFunction],
           mode,
-          isDistinct,
-          newId)
+          isDistinct// ,
+          // newId
+        )
       }
       case CaseWhen(branches,els) => CaseWhen(branches.map{ case (x,y) => (withFreshExprIDs(x), withFreshExprIDs(y)) }, els.map(withFreshExprIDs(_)))
       case _ => e.withNewChildren(e.children.map( x => withFreshExprIDs(x,trace)))

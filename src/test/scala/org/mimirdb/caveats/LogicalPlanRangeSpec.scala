@@ -28,7 +28,7 @@ class LogicalPlanRangeSpec
   def trace[T](loggerNames:String*)(op:  => T): T =
   {
     val loggers = loggerNames.map { Logger.getLogger(_) }
-    val oldLevels = loggers.map { _.getLevel }
+    val oldLevels t = loggers.map { _.getLevel }
     loggers.foreach { _.setLevel(Level.TRACE) }
 
     val ret: T = op
@@ -356,7 +356,7 @@ class LogicalPlanRangeSpec
       }
 
       "certain inputs.aggregation - no group-by - avg" >> {
-        skipped("avg agg rewrite not working yet!")
+        // skipped("avg agg rewrite not working yet!")
         annotBagEqualToDF(
           dfr.agg(avg($"A").as("X")).select($"X"),
 """
@@ -367,7 +367,7 @@ class LogicalPlanRangeSpec
 |               1|               1|               1|          1.71428571429|          1.71428571429|
 +----+----------------+----------------+----------------+--------------+--------------+
 """
-  // , trace = true
+  , trace = true
         )
       }
 
