@@ -18,6 +18,7 @@ import org.mimirdb.caveats.annotate._
 import org.mimirdb.caveats.Constants._
 
 import org.mimirdb.spark.sparkWorkarounds._
+import org.apache.spark.sql.SparkSession
 
 /**
   * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
@@ -120,6 +121,11 @@ object Caveats
       RowEncoder(stripped.schema)
     )
 
+  }
+
+  def registerAllUDFs(s: SparkSession) = {
+    Caveat.registerUDF(s)
+    ApplyCaveatRange.registerUDF(s)
   }
 
 }

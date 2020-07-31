@@ -73,6 +73,14 @@ case class RangeBoundedExpr[T <: Expression](lb: T, bg: T, ub: T)
 object RangeBoundedExpr
 {
   def makeCertain[T <: Expression](e: T): RangeBoundedExpr[T] = RangeBoundedExpr[T](e,e,e)
+  def undboundedUncertain[T <: Expression](e: T): RangeBoundedExpr[Expression] = {
+    val dt = e.dataType
+    RangeBoundedExpr(
+      Literal(BoundedDataType.domainMin(dt)),
+      e,
+      Literal(BoundedDataType.domainMax(dt))
+    )
+  }
   def fromBounds[T <: Expression](lb: T, ub: T): RangeBoundedExpr[Expression] = RangeBoundedExpr(lb,Literal(1),ub)
   def fromTuple[T <: Expression](t: (T,T,T)): RangeBoundedExpr[T] = RangeBoundedExpr(t._1,t._2,t._3)
   def fromSeq[T <: Expression](s: Seq[T]): RangeBoundedExpr[T] = {
@@ -373,6 +381,24 @@ object CaveatRangeExpression
           }
         }
       }
+
+      // UDFs - no guarantees here, the output could be any value as far as we know.
+      // there is a special type of function for caveating in SQL, replace these here
+      case ScalaUDF(function,
+        dataType,
+        children,
+        inputEncoders,
+        udfName,
+        nullable,
+        udfDeterministic)  =>
+        {
+          if(udfName.getOrElse(false).equals(ApplyCaveatRange.udfName)) {
+            RangeBoundedExpr(children(1),children(0),children(2))
+          }
+          else {
+            RangeBoundedExpr.undboundedUncertain(expr)
+          }
+        }
 
       // works for and / or  too
       case _ => liftPointwise(expr,groupByAttrPairs,trace)

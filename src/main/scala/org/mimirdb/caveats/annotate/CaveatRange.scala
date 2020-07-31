@@ -3,6 +3,7 @@ package org.mimirdb.caveats.annotate
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{ CodegenContext, ExprCode }
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.SparkSession
 
 /**
   * Expression that annotates an
@@ -27,6 +28,8 @@ case class CaveatRange(
   family: Option[String] = None,
   key: Seq[Expression] = Seq()) extends Expression
     with UserDefinedExpression {
+
+
 
   def dataType = value.dataType
   protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
@@ -68,5 +71,19 @@ object ApplyCaveatRange {
     key: Seq[Expression] = Seq(),
   ): Expression =
     CaveatRange(value, lb, ub, message, family, key)
+
+  def udfName = "RangeCaveat"
+
+  /**
+    * UDF that will be registered with Spark SQL to enable caveating from SQL
+    */
+  def udf(bg: Any, lb: Any, ub: Any): String = // cannot register UDFs that return Any. We never evaluate this function anyways, so just pretend it returns a string
+  {
+    bg.toString()
+  }
+
+  def registerUDF(s: SparkSession) = {
+    s.udf.register(udfName, udf _)
+  }
 
 }

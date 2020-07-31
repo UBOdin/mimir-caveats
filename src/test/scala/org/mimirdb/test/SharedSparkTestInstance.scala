@@ -29,6 +29,17 @@ object SharedSparkTestInstance
       .format("csv")
       .option("header", "true")
       .load("test_data/tip.csv")
+  lazy val tables = Seq(dfr,dfs,dft,dftip)
+  val tableNames = Seq("r","s","t","tip")
+  var tablesLoaded = false
+
+  def registerSQLtables() = {
+    if(!tablesLoaded) {
+      tableNames.zip(tables).map{ case (name,table) => table.createTempView(name) }
+      tablesLoaded = true
+    }
+  }
+
 }
 
 trait SharedSparkTestInstance
@@ -38,4 +49,9 @@ trait SharedSparkTestInstance
   lazy val dfs = SharedSparkTestInstance.dfs
   lazy val dft = SharedSparkTestInstance.dft
   lazy val dftip = SharedSparkTestInstance.dftip
+  lazy val tables = Seq(dfr,dfs,dft,dftip)
+
+  def registerSQLtables() = {
+    SharedSparkTestInstance.registerSQLtables()
+  }
 }

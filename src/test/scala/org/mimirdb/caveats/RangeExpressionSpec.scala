@@ -276,8 +276,15 @@ class RangeExpressionSpec
         )(1,9,2,4)((1,4,15))
       }
 
+      "udfs" >> {
+        val myudf = udf((x:Int) => x)
 
+        rangeTestCertInput(myudf($"a").as("a"),
+//          trace = true
+        )(1,1,1,1)((-2147483648,1,2147483647)) must beTrue
+      }
     }
+
   }
 
 }

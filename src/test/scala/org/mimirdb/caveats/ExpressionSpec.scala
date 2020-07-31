@@ -10,6 +10,7 @@ import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReference
 import org.apache.spark.sql.catalyst.plans.logical.Project
 import org.apache.spark.sql.functions.{ col, lit, when }
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.functions._
 
 import org.mimirdb.test._
 import org.mimirdb.caveats.implicits._
@@ -26,7 +27,7 @@ class ExpressionSpec
     InternalRow.fromSeq(
       fields.map { _._1 }
             .map { Literal(_).eval(InternalRow()) } ++
-      fields.map { _._2 } ++ 
+      fields.map { _._2 } ++
       Seq(false)
     )
   }
@@ -45,7 +46,7 @@ class ExpressionSpec
     val schema =
       wrapper.child.output
     // println(s"SCHEMA: $schema")
-    val testColumn = 
+    val testColumn =
       wrapper.output.find { _.name.equals("TEST") }.get
     val testAnnotationColumn =
       CaveatExistsAttributeAnnotation.annotationFor(testColumn)
@@ -127,13 +128,13 @@ class ExpressionSpec
       annotate(
         $"A".caveatIf("A possible problem", $"A" === "1")
       ){
-        e => 
+        e =>
         // No caveats = no caveats
         test(e)("0" -> false, "1" -> false, "2" -> false) must beFalse
-        
+
         // Caveats on non-accessed values shouldn't change anything
         test(e)("0" -> false, "1" -> true,  "2" -> false) must beFalse
-        
+
         // Caveats on the base value should propagate
         test(e)("0" -> true,  "1" -> false, "2" -> false) must beTrue
 
@@ -176,6 +177,20 @@ class ExpressionSpec
 
         // T* AND T*
         test(e)("1" -> true, "1" -> true, "0" -> false)   must beTrue
+      }
+    }
+
+    "handle UDFs" >> {
+      val myudf = udf((x:String) => x)
+
+      annotate(
+        myudf($"A")
+      ){ e =>
+        // output will always be caveated
+        test(e)("1" -> false, "1" -> false, "1" -> false) must beFalse
+
+        // output will always be caveated
+        test(e)("1" -> true, "1" -> true, "1" -> true) must beTrue
       }
     }
 

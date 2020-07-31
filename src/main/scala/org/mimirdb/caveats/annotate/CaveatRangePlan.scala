@@ -1,6 +1,7 @@
 package org.mimirdb.caveats.annotate
 
 import org.apache.spark.sql.catalyst.expressions._
+
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -634,11 +635,12 @@ class CaveatRangePlan()
       // needs be dealt with as an aggregation with only groupby, pass over to aggregation rewrite
       case Distinct(child: LogicalPlan) =>
       {
-        tapply(Aggregate(
-          child.output,
-          child.output,
-          child
-        )
+        tapply(
+          Aggregate(
+            child.output,
+            child.output,
+            child
+          )
         )
       }
       case Repartition(numPartitions: Int, shuffle: Boolean, child: LogicalPlan) =>
@@ -652,15 +654,30 @@ class CaveatRangePlan()
       {
         ???
       }
-      // a single row computed form expressions
+      // a single row that has no attributes (dealt with like other leaf relations)
       // case OneRowRelation() =>
       // {
-      //   // this is a dummy operator that does not do anything,
-      //   PASS_THROUGH_CAVEATS
+      //   ???
       // }
+
+      //TODO only works for deduplication on all attributes. Otherwise, we need to encode uncertainty in the selected tuples
       case Deduplicate(keys: Seq[Attribute], child: LogicalPlan) =>
       {
-        ???
+        logrewr("DEDUPLICATION")
+        // deduplication on all attributes dealt by rewriting it into
+        // aggregation with group-by on all attributes, but without any
+        // aggregation functions.
+        if (keys.equals(child.output)) {
+          val groupby = child.output
+          val replaceAgg = Aggregate(groupby, groupby, child)
+          val rewrReplacementAgg = tapply(replaceAgg)
+          rewrReplacementAgg
+        }
+        // deduplication on a subset of the attributes as keys results picks the first tuple with a particular key which is sensitive to sort order.
+        //
+        else {
+          ???
+        }
       }
       // create tuple annotation [1,1,1] and for each attribute A create (A,A) as the attribute bound
       case leaf:LeafNode =>

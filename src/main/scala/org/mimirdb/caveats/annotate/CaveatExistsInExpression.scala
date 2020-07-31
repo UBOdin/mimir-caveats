@@ -43,12 +43,12 @@ class CaveatExistsInExpression(
 )
   extends LazyLogging
 {
-  val compilePlan:CaveatExistsInPlan = 
+  val compilePlan:CaveatExistsInPlan =
     Option(planCompiler).getOrElse { new CaveatExistsInPlan(pedantic) }
   val withoutExpectingAggregate =
     if(expectAggregate){
       new CaveatExistsInExpression(
-        pedantic = pedantic, 
+        pedantic = pedantic,
         expectAggregate = false,
         planCompiler = planCompiler
       )
@@ -74,11 +74,11 @@ class CaveatExistsInExpression(
       // For several expression types, we can do better than the naive default.
       /////////////////////////////////////////////////////////////////////////
 
-      // The caveat expression (obviously) is always caveated (assuming the 
-      // caveat condition holds).  If we're not running in pedantic mode 
+      // The caveat expression (obviously) is always caveated (assuming the
+      // caveat condition holds).  If we're not running in pedantic mode
       // however, exclude global caveats.
       case caveat: ApplyCaveat =>
-        if(pedantic || !caveat.global) { 
+        if(pedantic || !caveat.global) {
           foldOr(caveat.condition, apply(caveat.value))
         }
         else { apply(caveat.value) }
@@ -92,12 +92,12 @@ class CaveatExistsInExpression(
         aggregateBoolOr(compilePlan.internalEncoding.annotationFor(a))
 
       case a: Attribute => compilePlan.internalEncoding.annotationFor(a)
-      
 
-      // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or 
+
+      // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or
       // a scalar subquery).  We can get a bit more fancy eventually, but for now let's take a
-      // simple, conservative approach: The result will be caveated if the nested query returns a 
-      // caveat on a value or record, or if any of the children going into the subquery are 
+      // simple, conservative approach: The result will be caveated if the nested query returns a
+      // caveat on a value or record, or if any of the children going into the subquery are
       // caveated.
       case sq: SubqueryExpression =>
       {
@@ -116,7 +116,7 @@ class CaveatExistsInExpression(
                     foldOr(
                       sq.plan.output
                         .map { attr => compilePlan.internalEncoding
-                                                  .annotationFor(attr) 
+                                                  .annotationFor(attr)
                               }:_*
                     )
                   )
@@ -266,6 +266,24 @@ class CaveatExistsInExpression(
       case _:AggregateFunction =>
         throw new IllegalArgumentException(
           "Expecting all `AggregateFunction`s to be nested within an AggregateExpression")
+
+      // if this is not a regular UDF, but our caveating UDF, then the result is caveated, otherwise it depends on the input
+      case ScalaUDF(function,
+        dataType,
+        children,
+        inputEncoders,
+        udfName,
+        nullable,
+        udfDeterministic)  =>
+        {
+          if(udfName.getOrElse(false).equals(Caveat.udfName)) {
+            Literal(true)
+          }
+          else {
+            foldOr(expr.children.map { apply(_) }:_*)
+          }
+        }
+
 
       //
       // We're not in one of our special cases.

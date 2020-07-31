@@ -9,11 +9,13 @@ import org.mimirdb.caveats.Constants._
 import org.mimirdb.caveats._
 import org.mimirdb.caveats.implicits._
 import org.mimirdb.caveats.annotate._
+import org.mimirdb.spark.sparkWorkarounds._
 import org.mimirdb.test._
 
 class LogicalPlanExistsSpec
   extends Specification
-  with SharedSparkTestInstance
+    with SharedSparkTestInstance
+    with DataFrameMatchers
 {
   import spark.implicits._
 
@@ -28,6 +30,35 @@ class LogicalPlanExistsSpec
       logger.setLevel(oldLevel)
     }
     return ret
+  }
+
+  def tracePlan(d: DataFrame, trace: Boolean = false) = {
+    if(trace)
+    {
+      println("================================================================================\n                                      FINAL\n================================================================================")
+      println("\n============================== QUERY EXECUTION (PLANS) ==============================\n\n")
+      d.queryExecution.analyzed
+      println(d.queryExecution)
+      println("\n============================== SCHEMA ==============================\n")
+      println(s"${d.schema}")
+      println("\n============================== RESULT ==============================\n")
+      d.showWithIntermediateResults(30,100)
+      d.explain() // ("codegen")
+    }
+  }
+
+  def annotBagEqualToDF(
+    input: DataFrame,
+    expectedOutput: String,
+    trace: Boolean = false,
+    pedantic: Boolean = true
+  ) : Boolean =
+  {
+    val annotated = Caveats.annotate(input, CaveatExists(
+                                                trace = trace,
+                                                pedantic = pedantic))
+    tracePlan(annotated,trace)
+    annotated must beBagEqualsTo(expectedOutput)
   }
 
   def annotate[T](
@@ -286,7 +317,7 @@ class LogicalPlanExistsSpec
         val (row, fields) = result(0)
         fields("A") must be equalTo(true)
         row must beFalse
-      } 
+      }
 
       annotate(
         base.filter(base("A") === 4)
@@ -295,7 +326,7 @@ class LogicalPlanExistsSpec
         val (row, fields) = result(0)
         fields("A") must be equalTo(true)
         row must beTrue
-      } 
+      }
 
     }
 
@@ -305,17 +336,59 @@ class LogicalPlanExistsSpec
           .sort( $"A" )
           .limit(5)
       ) { result =>
-        // These are just the baseline annotations as a sanity check.  If these are wrong, 
+        // These are just the baseline annotations as a sanity check.  If these are wrong,
         // then the limit on r.csv is returning a different subset of records than expected
         result.map { _._2("A") } must be equalTo(Seq(false, false, false, false, true))
         result.map { _._2("B") } must be equalTo(Seq(false, false, false, false, false))
 
         // We expect that the row annotations should contain at least one true.  Technically
-        // all of the one records (the first four rows) can be safely marked false, but the 
+        // all of the one records (the first four rows) can be safely marked false, but the
         // annotation scheme isn't quite that clever (yet)
         result.map { _._1 } must contain(true)
         // result.map { _._1 } must be equalTo(Seq(false, false, false, false, true))
       }
+    }
+
+    "support caveat function in SQL" >> {
+      // register tables and UDF
+      Caveat.registerUDF(spark)
+      registerSQLtables()
+
+      annotBagEqualToDF(spark.sql("SELECT Caveat(A) AS A FROM r"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  1|[false,[true]]|
+|  1|[false,[true]]|
+|  2|[false,[true]]|
+|  1|[false,[true]]|
+|  1|[false,[true]]|
+|  2|[false,[true]]|
+|  4|[false,[true]]|
++---+----------------+
+"""
+// , trace = true
+      )
+
+      spark.udf.register("myfunkyfunc", (x:String) => x)
+
+      annotBagEqualToDF(spark.sql("SELECT myfunkyfunc(A) AS A FROM r"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  1|[false,[false]]|
+|  1|[false,[false]]|
+|  2|[false,[false]]|
+|  1|[false,[false]]|
+|  1|[false,[false]]|
+|  2|[false,[false]]|
+|  4|[false,[false]]|
++---+----------------+
+"""
+// , trace = true
+      )
     }
 
   }
