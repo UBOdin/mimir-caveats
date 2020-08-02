@@ -29,8 +29,6 @@ case class CaveatRange(
   key: Seq[Expression] = Seq()) extends Expression
     with UserDefinedExpression {
 
-
-
   def dataType = value.dataType
   protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
     value.genCode(ctx) // if no instrumentation this is just a value
@@ -75,15 +73,32 @@ object ApplyCaveatRange {
   def udfName = "RangeCaveat"
 
   /**
+    * Default message to use for caveats if the user has not provided any.
+    *
+    * @return
+    */
+  def defaultMessage = Literal("Caveated Value")
+
+  /**
     * UDF that will be registered with Spark SQL to enable caveating from SQL
     */
-  def udf(bg: Any, lb: Any, ub: Any): String = // cannot register UDFs that return Any. We never evaluate this function anyways, so just pretend it returns a string
-  {
-    bg.toString()
-  }
+  def udf(children: Seq[Expression]): Expression =
+    children match {
+      case bg +: lb +: ub +: Nil => apply(bg, lb, ub, Literal(defaultMessage))
+      case bg +: lb +: ub +: message +: Nil => apply(bg, lb, ub, message)
+      case bg +: lb +: ub +: message +: key => apply(bg, lb, ub, message, None, key)
+      case _ => throw new AnnotationException("""RangeCaveat needs to be provided with at least three inputs:
+- the expression calculating the value to be caveated
+- an expression calculating an lower bound on the value
+- an expression calculating an upper bound on the value
+
+Additionally, a message describing why the value was caveated can be provided. Finally, you may also provide one or more expressions calculating a key for identifying caveats of a particular type.
+"""
+      )
+    }
 
   def registerUDF(s: SparkSession) = {
-    s.udf.register(udfName, udf _)
+    s.sessionState.functionRegistry.createOrReplaceTempFunction(udfName, udf _)
   }
 
 }
