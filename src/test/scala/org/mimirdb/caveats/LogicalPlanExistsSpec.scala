@@ -439,6 +439,36 @@ class LogicalPlanExistsSpec
  // , trace = true
       )
 
+      annotBagEqualToDF(spark.sql("SELECT CaveatReplaceIf(A,10,A<>1) AS A FROM r"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  1|[false,[false]]  |
+|  1|[false,[false]]  |
+|  10|[false,[true]] |
+|  1|[false,[false]]  |
+|  1|[false,[false]]  |
+|  10|[false,[true]] |
+|  10|[false,[true]] |
++---+----------------+
+"""
+ // , trace = true
+      )
+
+      annotBagEqualToDF(spark.sql("SELECT A FROM (SELECT CaveatReplaceIf(A,10,A<>1) AS A FROM r) sub WHERE HasCaveat(A)"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  10|[true,[true]] |
+|  10|[true,[true]] |
+|  10|[true,[true]] |
++---+----------------+
+"""
+ // , trace = true
+      )
+
       spark.udf.register("myfunkyfunc", (x:String) => x)
 
       annotBagEqualToDF(spark.sql("SELECT myfunkyfunc(A) AS A FROM r"),

@@ -46,6 +46,23 @@ class ColumnImplicits(col: Column)
   def hasCaveat: Column =
     new Column(CaveatExistsInExpression(col.expr))
 
+  def replaceAndCaveatIf(message: Column, replacement: Column, condition: Column): Column = {
+    new Column(CaseWhen(
+      Seq(
+        (
+          condition.expr,
+          ApplyCaveat(
+            value = replacement.expr,
+            message = message.cast(StringType).expr
+          )
+        )
+      ),
+      col.expr
+    )
+    )
+  }
+
+
   def rangeCaveat(message: String, lb: Column, ub: Column): Column =
     rangeCaveat(lit(message), lb, ub)
 

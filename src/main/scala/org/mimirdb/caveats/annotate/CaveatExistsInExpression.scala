@@ -295,6 +295,7 @@ class CaveatExistsInExpression(
   {
     Alias(apply(expr), expr.name)()
   }
+
 }
 
 object CaveatExistsInExpression
@@ -310,4 +311,11 @@ object CaveatExistsInExpression
       expectAggregate = expectAggregate
     )(expr)
   }
+
+  def replaceHasCaveat(expr: Expression): Expression =
+    expr match {
+      case HasCaveat(expr) => CaveatExistsInExpression(expr)
+      case e => e.withNewChildren(e.children.map(replaceHasCaveat _))
+    }
+
 }

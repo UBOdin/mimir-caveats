@@ -136,7 +136,9 @@ class CaveatExistsInPlan(
                             attributes = projectList.map { e => e.toAttribute -> annotateExpression(e) }
                          )
         Project(
-          projectList = projectList ++ annotation,
+          projectList = projectList.map(
+            CaveatExistsInExpression.replaceHasCaveat(_)).asInstanceOf[Seq[NamedExpression]]
+            ++ annotation,
           child = rewrittenChild
         )
       }
@@ -163,7 +165,7 @@ class CaveatExistsInPlan(
           Note that when [unrequiredChildIndex] is empty, the schema emitted by
           a generator is/should be a strict superset of [child].
         */
-
+        //TODO deal with HasCaveat in here necessary?
         val generatorAnnotation = annotateExpression(generator)
         val rewrittenChild = annotate(child)
         val rewrittenPlan =
@@ -193,13 +195,16 @@ class CaveatExistsInPlan(
       {
         /*
           Filter is a normal where clause.  Caveats on the condition expression
-          get propagated into the row annotation.
+          get propagated into the row annotation. If the user checks for caveats
+          with HasCaveat(expr), we have to replace this with the result of
+          CaveatExistsInExpression(expr).
         */
         val conditionAnnotation = annotateExpression(condition)
+        val conditionReplacedHasCaveat = CaveatExistsInExpression.replaceHasCaveat(condition)
         val rewrittenChild = annotate(child)
         internalEncoding.annotate(
           oldPlan = plan,
-          newPlan = Filter(condition, rewrittenChild),
+          newPlan = Filter(conditionReplacedHasCaveat, rewrittenChild),
           addToRow = Seq(conditionAnnotation)
         )
       }

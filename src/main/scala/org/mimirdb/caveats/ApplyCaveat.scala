@@ -7,6 +7,8 @@ import org.apache.spark.sql.catalyst.plans.logical.{ LogicalPlan, Project, Filte
 import org.apache.spark.sql.catalyst.InternalRow
 
 import org.mimirdb.caveats.Constants._
+import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.types.BooleanType
 
 case class ApplyCaveat(
   value: Expression,
@@ -19,7 +21,7 @@ case class ApplyCaveat(
   with UserDefinedExpression
 {
   def dataType = value.dataType
-  protected def doGenCode(ctx: CodegenContext,ev: ExprCode): ExprCode = 
+  protected def doGenCode(ctx: CodegenContext,ev: ExprCode): ExprCode =
     value.genCode(ctx)
   def eval(input: InternalRow) = value.eval(input)
   def nullable = value.nullable
@@ -27,9 +29,9 @@ case class ApplyCaveat(
 
   def onPlan(plan: LogicalPlan): CaveatSet =
   {
-    if(global){ 
+    if(global){
       val emptyRow = InternalRow()
-      new SingletonCaveatSet(Caveat( 
+      new SingletonCaveatSet(Caveat(
         message = message.eval(emptyRow).asInstanceOf[String],
         family = family,
         key = key.map { _.eval(emptyRow) }.map { Literal(_) }
@@ -40,7 +42,7 @@ case class ApplyCaveat(
           Seq(
             Alias(message, MESSAGE_ATTRIBUTE)(),
             Alias(CreateArray(key), KEY_ATTRIBUTE)()
-          ), 
+          ),
           Filter(
             condition,
             plan
@@ -52,4 +54,45 @@ case class ApplyCaveat(
   }
 }
 
+object ApplyCaveat {
 
+  def replace(
+    value: Expression,
+    replacement: Expression,
+    condition: Expression,
+    message: Expression,
+    key: Seq[Expression] = Seq()
+  ): Expression =
+    CaseWhen(
+      Seq(
+        (
+          condition,
+          ApplyCaveat(
+            value = replacement,
+            message = message,
+            key = key
+          )
+        )
+      ),
+      value
+    )
+
+}
+
+case class HasCaveat(
+  value: Expression)
+    extends Expression
+    with UserDefinedExpression
+{
+
+  override def children: Seq[Expression] = Seq(value)
+
+  override def nullable: Boolean = value.nullable
+
+  override def eval(input: InternalRow): Any = false
+
+  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
+    Literal(false).genCode(ctx)
+
+  override def dataType: DataType = BooleanType
+}
