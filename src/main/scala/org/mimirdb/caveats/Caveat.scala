@@ -6,6 +6,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.AnalysisException
 import org.mimirdb.caveats.annotate.AnnotationException
+import org.apache.spark.sql.catalyst.expressions.IsNull
 
 case class Caveat(
   message: String,
@@ -25,11 +26,15 @@ object Caveat
   }
 
   /**
-    * Name of the Caveat UDF SQL function.
+    * Names and UDFs for Caveating in SQL.
     *
     * @return the UDF name
     */
-  def udfName = "Caveat"
+  def udfs = Seq(
+    ("Caveat", Caveat.caveatUDF _),
+    ("CaveatIf", Caveat.caveatIfUDF _),
+    ("CaveatIfNull", Caveat.caveatIfNullUDF _)
+  )
 
   /**
     * Default message to use for caveats if the user has not provided any.
@@ -51,7 +56,7 @@ object Caveat
     * @param children
     * @return the input (first child) wrapped into [ApplyCaveat]
     */
-  def udf(children: Seq[Expression]): Expression =
+  def caveatUDF(children: Seq[Expression]): Expression =
     children match {
       // user has not provided a message
       case value +: Nil => ApplyCaveat(value, Literal(defaultMessage))
@@ -60,11 +65,61 @@ object Caveat
       // value, message, and key
       case value +: message +: key => ApplyCaveat(value,message,None,key)
         // should never get here
-      case _ => throw new AnnotationException("""Caveat needs to be provided at least with an expression whose result the caveat should be applied to like so Caveat(value).
-
-Other options are Caveat(value,message) where a message is recorded for the caveated value and Caveat(value,message,keys...) which creates and identy for the caveat based on the values of the keys expressions.
-""")
+      case _ => throw new AnnotationException(
+        """Caveat needs to be provided at least with an expression whose result the
+          |caveat should be applied to like so Caveat(value).
+          |
+          |Other options are Caveat(value,message) where a  message is recorded for the caveated value and Caveat(value,message,keys...) which creates and identy for the caveat based on the values of the keys expressions.""".stripMargin)
     }
+
+  /**
+    * [[FunctionBuilder]] that is registered as a UDF to replace Caveat UDF calls
+    * with ApplyCaveat expressions.
+    *
+    * @param children
+    * @return the input (first child) wrapped into [ApplyCaveat] with condition
+    * (second child)
+    */
+  def caveatIfUDF(children: Seq[Expression]): Expression =
+    children match {
+      // user has not provided a message
+      case value +: cond +: Nil => ApplyCaveat(value, Literal(defaultMessage), condition = cond)
+      // value and message
+      case value +: cond +: message +: Nil => ApplyCaveat(value,message, condition = cond)
+      // value, message, and key
+      case value +: cond +: message +: key => ApplyCaveat(value,message,None,key, condition = cond)
+        // should never get here
+      case _ => throw new AnnotationException(
+        """CaveatIf needs to be provided at least with an expression whose result the
+          |caveat should be applied to and a condition like so Caveat(value, condition).
+          |
+          |Other options are Caveat(value,cond,message) where a  message is recorded for the caveated value and Caveat(value,cond,message,keys...) which creates and identy for the caveat based on the values of the keys expressions.""".stripMargin)
+    }
+
+  /**
+    * [[FunctionBuilder]] that is registered as a UDF to replace Caveat UDF calls
+    * with ApplyCaveat expressions.
+    *
+    * @param children
+    * @return the input (first child) wrapped into [ApplyCaveat] with condition
+    * that checks whether input is null.
+    */
+  def caveatIfNullUDF(children: Seq[Expression]): Expression =
+    children match {
+      // user has not provided a message
+      case value +: Nil => ApplyCaveat(value, Literal(defaultMessage), condition = IsNull(value))
+      // value and message
+      case value +: message +: Nil => ApplyCaveat(value,message, condition = IsNull(value))
+      // value, message, and key
+      case value +: message +: key => ApplyCaveat(value,message,None,key, condition = IsNull(value))
+        // should never get here
+      case _ => throw new AnnotationException(
+        """Caveat needs to be provided at least with an expression whose result the
+          |caveat should be applied to like so Caveat(value).
+          |
+          |Other options are Caveat(value,message) where a  message is recorded for the caveated value and Caveat(value,message,keys...) which creates and identy for the caveat based on the values of the keys expressions.""".stripMargin)
+    }
+
 
   /**
     * We register UDF that will be registered with Spark SQL to enable caveating
@@ -73,6 +128,6 @@ Other options are Caveat(value,message) where a message is recorded for the cave
     * @param s the SparkSession for which we want to register the UDF.
     */
   def registerUDF(s: SparkSession) = {
-    s.sessionState.functionRegistry.createOrReplaceTempFunction(udfName, udf _)
+    udfs.map{ case (name,udf) =>  s.sessionState.functionRegistry.createOrReplaceTempFunction(name, udf) }
   }
 }

@@ -276,12 +276,12 @@ class CaveatExistsInExpression(
         nullable,
         udfDeterministic)  =>
         {
-          if(udfName.getOrElse(false).equals(Caveat.udfName)) {
-            Literal(true)
-          }
-          else {
+          // if(udfName.getOrElse(false).equals(Caveat.udfName)) {
+          //   Literal(true)
+          // }
+          // else {
             foldOr(expr.children.map { apply(_) }:_*)
-          }
+          // }
         }
 
 

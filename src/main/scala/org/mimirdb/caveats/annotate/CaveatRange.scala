@@ -80,7 +80,7 @@ object ApplyCaveatRange {
   def defaultMessage = Literal("Caveated Value")
 
   /**
-    * UDF that will be registered with Spark SQL to enable caveating from SQL
+    * UDF that will be registered with Spark SQL to enable caveating from SQL.
     */
   def udf(children: Seq[Expression]): Expression =
     children match {
@@ -88,11 +88,11 @@ object ApplyCaveatRange {
       case bg +: lb +: ub +: message +: Nil => apply(bg, lb, ub, message)
       case bg +: lb +: ub +: message +: key => apply(bg, lb, ub, message, None, key)
       case _ => throw new AnnotationException("""RangeCaveat needs to be provided with at least three inputs:
-- the expression calculating the value to be caveated
-- an expression calculating an lower bound on the value
-- an expression calculating an upper bound on the value
-
-Additionally, a message describing why the value was caveated can be provided. Finally, you may also provide one or more expressions calculating a key for identifying caveats of a particular type.
+|- the expression calculating the value to be caveated
+|- an expression calculating an lower bound on the value
+|- an expression calculating an upper bound on the value
+|
+|Additionally, a message describing why the value was caveated can be provided. Finally, you may also provide one or more expressions calculating a key for identifying caveats of a particular type.
 """
       )
     }

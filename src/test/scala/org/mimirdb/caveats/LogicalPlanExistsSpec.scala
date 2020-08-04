@@ -405,6 +405,39 @@ class LogicalPlanExistsSpec
  // , trace = true
       )
 
+      annotBagEqualToDF(spark.sql("SELECT CaveatIf(A,A=1) AS A FROM r"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  1|[false,[true]]  |
+|  1|[false,[true]]  |
+|  2|[false,[false]] |
+|  1|[false,[true]]  |
+|  1|[false,[true]]  |
+|  2|[false,[false]] |
+|  4|[false,[false]] |
++---+----------------+
+"""
+ // , trace = true
+      )
+
+      annotBagEqualToDF(spark.sql("SELECT CaveatIfNull(CASE WHEN A = 1 THEN A ELSE NULL END) AS A FROM r"),
+"""
++---+----------------+
+|  A|       __CAVEATS|
++---+----------------+
+|  1|[false,[false]]  |
+|  1|[false,[false]]  |
+|  null|[false,[true]] |
+|  1|[false,[false]]  |
+|  1|[false,[false]]  |
+|  null|[false,[true]] |
+|  null|[false,[true]] |
++---+----------------+
+"""
+ // , trace = true
+      )
 
       spark.udf.register("myfunkyfunc", (x:String) => x)
 

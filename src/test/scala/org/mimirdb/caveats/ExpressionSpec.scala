@@ -186,10 +186,10 @@ class ExpressionSpec
       annotate(
         myudf($"A")
       ){ e =>
-        // output will always be caveated
+        // output will be caveated if input is
         test(e)("1" -> false, "1" -> false, "1" -> false) must beFalse
 
-        // output will always be caveated
+        // output will be caveated if input is
         test(e)("1" -> true, "1" -> true, "1" -> true) must beTrue
       }
     }
