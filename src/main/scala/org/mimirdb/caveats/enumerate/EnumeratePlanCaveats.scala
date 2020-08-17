@@ -66,6 +66,7 @@ object EnumeratePlanCaveats
    * @param  row        True to include row-level caveats
    * @param  attributes Include attribute-level caveats for the specified attrs
    * @param  sort       True to include caveats affecting the sort order
+   * @param  constraint Return caveats only for the selected rows
    * 
    * @return            A set of [[CaveatSet]]s enumerating the caveats.
    *
@@ -92,6 +93,16 @@ object EnumeratePlanCaveats
     )
   }
 
+  /**
+   * Recursive implementation of caveat enumeration for logical plans
+   * 
+   * @param row          The condition under which to return a row caveat
+   * @param attributes   The condition under which to return caveats for the specified attributes
+   * @param sort         True to return caveats affecting the sort order
+   * @param plan         The plan to enumerate caveats on
+   * 
+   * @return             CaveatSets for the plan
+   */
   def recurPlan(
     row: Option[Expression],
     attributes: Map[ExprId,Expression],
@@ -236,9 +247,11 @@ object EnumeratePlanCaveats
             attributes.toSeq
           )
 
+        // We only care about caveats pertaining to the output rows, so
+        // AND the slices with the filter condition.
         val childCaveats = recurPlan(
-          row = row,
-          attributes = fieldDependenciesToPropagate,
+          row = row.map { foldAnd(_, condition) },
+          attributes = fieldDependenciesToPropagate.mapValues { foldAnd(_, condition) },
           sort = sort,
           plan = child
         )
@@ -362,7 +375,7 @@ object EnumeratePlanCaveats
       {
         val projections =
           aggregateExpressions.map { agg => agg.exprId -> agg }
-                              .toMap
+                              .toMap 
 
         // This function inlines attributes in a vertical slice so that they're
         // valid on `child`.  The main reason that we can't just use 'inline' is
@@ -412,6 +425,8 @@ object EnumeratePlanCaveats
               )
             }.toSeq
           )
+
+        logger.trace(s"Propagated Child Fields: $propagatedChildFields")
 
         val childCaveats =
           recurPlan(
@@ -496,6 +511,12 @@ object EnumeratePlanCaveats
   def mergeVerticalSlices(
     deps: Seq[(ExprId, Expression)]
   ): Map[ExprId, Expression] =
-    deps.groupBy(_._1)
+  {
+    logger.trace(s"Merge Vertical Slices: $deps")
+    val ret = 
+      deps.groupBy(_._1)
         .mapValues { deps => foldOr(deps.map { _._2 }.toSeq:_*) }
+    logger.trace(s"... returning : $ret")
+    return ret
+  }
 }

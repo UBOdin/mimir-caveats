@@ -11,6 +11,7 @@
   <logger name="org.mimirdb.caveats" level="ERROR" />
   <logger name="org.mimirdb.caveats.annotate.CaveatExistsInPlan" level="ERROR" />
   <logger name="org.mimirdb.lenses.inference.InferTypes$" level="ERROR" />
+  <logger name="org.mimirdb.caveats.enumerate.EnumeratePlanCaveats$" level="ERROR" />
   
   <root level="ERROR">
     <appender-ref ref="STDOUT" />
