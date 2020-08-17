@@ -159,9 +159,9 @@ object SparkTreePrinter {
       // this child in all children.
       case (name, value: TreeNode[_]) if o.containsChild(value) =>
         name -> JInt(o.children.indexOf(value))
-      case (name, value: Seq[T]) if value.forall(o.containsChild) =>
+      case (name, value: Seq[_]) if value.asInstanceOf[Seq[T]].forall(o.containsChild) =>
         name -> JArray(
-          value.map(v => JInt(o.children.indexOf(v.asInstanceOf[TreeNode[_]]))).toList
+          value.asInstanceOf[Seq[T]].map(v => JInt(o.children.indexOf(v.asInstanceOf[TreeNode[_]]))).toList
         )
       case (name, value) => name -> parseToJson(value)
     }.toList
