@@ -67,5 +67,5 @@ pomExtra := <url>http://mimirdb.info</url>
 /////// Publishing Options ////////
 // use `sbt publish` to update the package in
 // your own local ivy cache
-
-publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
+publishTo := Some(Resolver.file("file",  new File("/var/www/maven_repo/")))
+// publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
