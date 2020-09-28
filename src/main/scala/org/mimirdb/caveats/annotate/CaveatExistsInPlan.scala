@@ -8,6 +8,7 @@ import org.apache.spark.sql.catalyst.plans.{ JoinType, Cross }
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
 import org.apache.spark.sql.catalyst.AliasIdentifier
 import org.apache.spark.sql.types.BooleanType
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import com.typesafe.scalalogging.LazyLogging
 
 import org.mimirdb.caveats._
@@ -636,6 +637,10 @@ class CaveatExistsInPlan(
         Project(fields ++ annotations, project)
       }
 
+      // It's also possible that we have something other than a projection,
+      // for example, if we're reading from a materialized view.  That's
+      // fine... create a fake projection on top and try again
+      case _ => recoverExistingAnnotations(Project(plan.output, plan))
     }
   }
 }
