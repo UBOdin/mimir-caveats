@@ -313,9 +313,8 @@ object CaveatExistsInExpression
   }
 
   def replaceHasCaveat(expr: Expression): Expression =
-    expr match {
+    expr.transformDown { 
       case HasCaveat(expr) => CaveatExistsInExpression(expr)
-      case e => e.withNewChildren(e.children.map(replaceHasCaveat _))
     }
 
 }
