@@ -26,7 +26,8 @@ case class CaveatRange(
   ub: Expression,
   message: Expression,
   family: Option[String] = None,
-  key: Seq[Expression] = Seq()) extends Expression
+  key: Seq[Expression] = Seq()
+) extends Expression
     with UserDefinedExpression {
 
   def dataType = value.dataType

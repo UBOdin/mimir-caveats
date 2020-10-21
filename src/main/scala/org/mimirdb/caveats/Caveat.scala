@@ -7,6 +7,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.AnalysisException
 import org.mimirdb.caveats.annotate.AnnotationException
+import org.mimirdb.caveats.lifting.Possible
 import org.apache.spark.sql.catalyst.expressions.IsNull
 import org.mimirdb.caveats.annotate.CaveatExistsInExpression
 
@@ -37,7 +38,8 @@ object Caveat
     ("CaveatIf", caveatIfUDF _),
     ("CaveatIfNull", caveatIfNullUDF _),
     ("CaveatReplaceIf", caveatReplaceIfUDF _),
-    ("HasCaveat", hasCaveatUDF _)
+    ("HasCaveat", hasCaveatUDF _),
+    ("Possible", possibleUDF _)
   )
 
   /**
@@ -148,6 +150,16 @@ object Caveat
           |caveat should be applied to and a condition like so Caveat(value, condition).
           |
           |Other options are Caveat(value,cond,message) where a  message is recorded for the caveated value and Caveat(value,cond,message,keys...) which creates and identy for the caveat based on the values of the keys expressions.""".stripMargin)
+    }
+
+  def possibleUDF(children: Seq[Expression]): Expression = 
+    children match {
+      case value +: Nil => Possible(value, None)
+      case value +: Literal(msg, _) +: Nil => Possible(value, Some(msg.toString))
+      case _ => throw new AnnotationException(
+        """Possible needs to be provided at least with an expression to test for
+          |possibility, like so: Possible(expr).  
+          |An optional message may be added, like so Possible(expr, "This value is possible because...")""")
     }
 
   /**

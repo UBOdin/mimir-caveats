@@ -1,14 +1,17 @@
 package org.mimirdb.test
 
 import org.apache.spark.sql.{ SparkSession, DataFrame, Column }
+import org.mimirdb.caveats.{ PrettyPrint, Caveat }
 
 object SharedSparkTestInstance
 {
-  lazy val spark =
+  lazy val spark = {
+    PrettyPrint.simpleOutput = true
     SparkSession.builder
       .appName("Mimir-Caveat-Test")
       .master("local[*]")
       .getOrCreate()
+  }
   lazy val dfr = /* R(A int, B int, C int) */
     spark.read
          .format("csv")
@@ -32,12 +35,18 @@ object SharedSparkTestInstance
   lazy val tables = Seq(dfr,dfs,dft,dftip)
   val tableNames = Seq("r","s","t","tip")
   var tablesLoaded = false
+  var udfsLoaded = false
 
-  def registerSQLtables() = {
+  def registerSQLtables() = synchronized {
     if(!tablesLoaded) {
       tableNames.zip(tables).map{ case (name,table) => table.createTempView(name) }
       tablesLoaded = true
     }
+  }
+  def registerUDFs() = synchronized {
+    if(!udfsLoaded) {
+      Caveat.registerUDF(spark)
+    }    
   }
 
 }

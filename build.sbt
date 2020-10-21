@@ -1,5 +1,5 @@
 name := "mimir-caveats"
-version := "0.2.3"
+version := "0.2.4"
 organization := "org.mimirdb"
 scalaVersion := "2.12.10"
 
@@ -29,6 +29,7 @@ libraryDependencies ++= Seq(
   // Logging
   "com.typesafe.scala-logging"    %%  "scala-logging"            % "3.9.2",
   "ch.qos.logback"                %   "logback-classic"          % "1.2.3",
+  "org.jline"                     %   "jline"                    % "3.16.0",
 
   // Testing
   "org.specs2"                    %%  "specs2-core"              % "4.8.2" % "test",

@@ -1,10 +1,12 @@
 package org.mimirdb.caveats
 
 import org.apache.spark.sql.types.StringType
-import org.apache.spark.sql.{ Column, DataFrame }
+import org.apache.spark.sql.{ Column, DataFrame, Row }
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.functions._
+import org.mimirdb.caveats.Constants._
 import org.mimirdb.caveats._
+import org.mimirdb.caveats.lifting.{ Possible, ResolveLifts }
 import org.mimirdb.caveats.annotate.{
   AnnotationException,
   CaveatExistsInExpression,
@@ -16,6 +18,7 @@ import org.mimirdb.caveats.enumerate.EnumeratePlanCaveats
 import org.mimirdb.caveats.annotate.CaveatExists
 import org.mimirdb.caveats.annotate.CaveatRangeStrategy
 import org.mimirdb.caveats.annotate.AnnotationInstrumentationStrategy
+import org.mimirdb.spark.sparkWorkarounds._
 
 class ColumnImplicits(col: Column)
 {
@@ -147,6 +150,11 @@ class ColumnImplicits(col: Column)
     )
   }
 
+  def possible =
+    new Column(Possible(col.expr, None))
+  def possible(message: String) = 
+    new Column(Possible(col.expr, Some(message)))
+
 }
 
 class DataFrameImplicits(df:DataFrame)
@@ -202,6 +210,7 @@ class DataFrameImplicits(df:DataFrame)
   }
 
 
+
   val implicitTruth = new ColumnImplicits(lit(true))
 
   def caveat(message: Column): DataFrame =
@@ -213,8 +222,32 @@ class DataFrameImplicits(df:DataFrame)
   def caveatIf(message: String, condition: Column): DataFrame =
     df.filter( implicitTruth.caveatIf(message, condition) )
 
+  def liftedFilter(condition: Column) = 
+    ResolveLifts(df.filter(condition)) 
+
   def stripCaveats: DataFrame =
     Caveats.strip(df)
+  def showCaveats(count: Int = 10)
+    { PrettyPrint.showWithCaveats(trackCaveats, count) }
+}
+
+class RowImplicits(row: Row)
+{
+  def caveats = 
+    row.getAs[Row](ANNOTATION_ATTRIBUTE)
+  def isCaveatted =
+    caveats.getAs[Boolean](ROW_FIELD)
+  def isCaveatted(field: String) =
+    caveats.getAs[Row](ATTRIBUTE_FIELD)
+           .getAs[Boolean](field)
+  def isCaveatted(field: Int) =
+    caveats.getAs[Row](ATTRIBUTE_FIELD)
+           .getAs[Boolean](field)
+  def caveattedAttributes:Seq[(Any, Boolean)] =
+    row.toSeq.dropRight(1)
+       .zip(caveats.getAs[Row](ATTRIBUTE_FIELD)
+                   .toSeq
+                   .map { _.asInstanceOf[Boolean] } )
 }
 
 object implicits
@@ -223,4 +256,6 @@ object implicits
     new ColumnImplicits(col)
   implicit def dataFrameImplicits(df: DataFrame): DataFrameImplicits =
     new DataFrameImplicits(df)
+  implicit def rowImplicits(row: Row): RowImplicits =
+    new RowImplicits(row)
 }
