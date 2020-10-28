@@ -48,7 +48,8 @@ class EnumerateSpec
       testDF("A") as "C",
       testDF("B") as "D"
     ).join(testDF, col("B") === col("C"))
-     .listCaveats(row = false, attributes = Set("B", "C")) must beEmpty
+     .listCaveats(row = false, attributes = Set("B", "C"))
+     .map { _.message } must contain(exactly("Hello 3", "Hello 4"))
   }
 
   "Enumerate Left Outer Joins" >> {
@@ -56,7 +57,8 @@ class EnumerateSpec
       testDF("A") as "C",
       testDF("B") as "D"
     ).join(testDF, col("B") === col("C"), "leftouter")
-     .listCaveats(row = false, attributes = Set("B", "C")) must beEmpty
+     .listCaveats(row = false, attributes = Set("B", "C"))
+     .map { _.message } must contain(exactly("Hello 3", "Hello 4"))
   }
 
   "Enumerate Joins with Cross-join Expressions" >> {
@@ -69,7 +71,7 @@ class EnumerateSpec
 
     df.listCaveats(
         constraint = df("E") === 3
-      ).map { _.message } must contain(exactly("Hello 3"))
+      ).map { _.message } must contain(exactly("Hello 3", "Hello 3"))
   }
 
 
