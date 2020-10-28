@@ -71,7 +71,7 @@ object ResolveLifts
             ApplyCaveat(
               value = HasCaveat(child),
               message = Literal(context.getOrElse { 
-                s"It's possible, but unknown that $expression"
+                s"It's possible, but unknown that $child"
               }),
               // condition = HasCaveat(child)
             )
