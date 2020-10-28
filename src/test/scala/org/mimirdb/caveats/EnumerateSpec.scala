@@ -1,5 +1,6 @@
 package org.mimirdb.caveats
 
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 import org.specs2.mutable.Specification
 import org.mimirdb.caveats.implicits._
@@ -10,7 +11,7 @@ class EnumerateSpec
   with SharedSparkTestInstance
 {
 
-  lazy val testDF = 
+  lazy val testDF:DataFrame = 
     dfr.select( 
           col("A"), 
           col("b").caveatIf(concat(lit("Hello "), col("C")), col("C") > 2) as "B" 
@@ -41,5 +42,35 @@ class EnumerateSpec
   "Enumerate Row Caveats" >> {
     caveats(row = true, attributes = Set()) must contain(exactly("World"))
   }
+
+  "Enumerate Joins" >> {
+    testDF.select(
+      testDF("A") as "C",
+      testDF("B") as "D"
+    ).join(testDF, col("B") === col("C"))
+     .listCaveats(row = false, attributes = Set("B", "C")) must beEmpty
+  }
+
+  "Enumerate Left Outer Joins" >> {
+    testDF.select(
+      testDF("A") as "C",
+      testDF("B") as "D"
+    ).join(testDF, col("B") === col("C"), "leftouter")
+     .listCaveats(row = false, attributes = Set("B", "C")) must beEmpty
+  }
+
+  "Enumerate Joins with Cross-join Expressions" >> {
+    val df = 
+      testDF.select(
+        testDF("A") as "C",
+        testDF("B") as "D"
+      ).join(testDF, col("B") === col("C"), "leftouter")
+       .select(col("B"), col("C"), col("A") + col("D") as "E")
+
+    df.listCaveats(
+        constraint = df("E") === 3
+      ).map { _.message } must contain(exactly("Hello 3"))
+  }
+
 
 }
