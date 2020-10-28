@@ -11,11 +11,16 @@ object expressionLogic
     e match { 
       case a: Attribute => Set(a)
       case s: SubqueryExpression => 
+      {
+        val isPlanAttribute = s.plan.output.map { _.exprId }.toSet
+        print(s"PLAN ATTRIBUTES: $isPlanAttribute")
         (
-          s.children.flatMap { attributesOfExpression(_) }.toSet 
-            -- 
-          s.plan.output.toSet
+          s.children
+           .flatMap { attributesOfExpression(_) }
+           .filter { a => !isPlanAttribute(a.exprId) }
+           .toSet 
         )
+      }
       case _ => e.children.flatMap { attributesOfExpression(_) }.toSet
     }
   }

@@ -12,6 +12,7 @@ import org.mimirdb.spark.expressionLogic.{
   isAggregate
 }
 import com.typesafe.scalalogging.LazyLogging
+import scala.{ Left, Right }
 
 /**
  * A class for enumerating caveats applied to a specified plan.
@@ -327,19 +328,19 @@ object EnumeratePlanCaveats
         // can quickly adapt as needed.
         
         ////// Option 1: Conservative approximation
-        // def fixUnsafeSlice(unsafeSlicePredicate: Expression, safeSlicePredicate: Expression, leftHandSide: Boolean): Expression = 
+        // def fixUnsafeSlice(unsafeSlicePredicate: Either[Expression,Expression], safeSlicePredicate: Expression): Expression = 
         //   Literal(true)
 
         ////// Option 2: Nested subquery
-        def fixUnsafeSlice(unsafeSlicePredicate: Expression, safeSlicePredicate: Expression, leftHandSide: Boolean): Expression = 
+        def fixUnsafeSlice(unsafeSlicePredicate: Either[Expression,Expression], safeSlicePredicate: Expression): Expression = 
           foldAnd(
           // for the LHS, we want to join in the RHS (and visa versa)
           // Spark apparently will do the heavy lifting of figuring
           // out which attributes are meant to be correlated.
-            Exists(
-              (if(leftHandSide) { right } else { left }),
-              Seq(unsafeSlicePredicate), 
-            ),
+            unsafeSlicePredicate match {
+              case Left(slice) => Exists(right, Seq(slice))
+              case Right(slice) => Exists(left, Seq(slice))
+            },
             safeSlicePredicate
           )
 
@@ -363,14 +364,12 @@ object EnumeratePlanCaveats
                 foldAnd(unsafeRowPredicates.map { _._1 }:_*)
               (
                 Some(fixUnsafeSlice(
-                  unsafeSlice,
-                  foldAnd(safeRowSliceLeft.map { _._1 }:_*),
-                  true
+                  Left(unsafeSlice),
+                  foldAnd(safeRowSliceLeft.map { _._1 }:_*)
                 )),
                 Some(fixUnsafeSlice(
-                  unsafeSlice,
+                  Right(unsafeSlice),
                   foldAnd(safeRowSliceRight.map { _._1 }:_*),
-                  false
                 ))
               )
             }
@@ -404,54 +403,60 @@ object EnumeratePlanCaveats
         val attributeDependenciesToPropagate =
           mergeVerticalSlices(
             attributeDependenciesFromJoinCondition
-             ++
+             ++ (
             attributes.toSeq
+              .map { case (attr, slice) =>  
+                val sliceAttrs = attributesOfExpression(slice).map { _.exprId }
+                if(sliceAttrs.exists { isLeft(_) } && sliceAttrs.exists { isRight(_) }) {
+                  attr -> fixUnsafeSlice(
+                    if(isLeft(attr)) { Left(slice) } else { Right(slice) },
+                    Literal(true)
+                  )
+                } else { 
+                  attr -> slice
+                }
+              }.toMap
+            )
           )
 
         val (attributesToPropagateLeft, attributesToPropagateRight) =
           attributeDependenciesToPropagate
-            .map { case (attr, slice) =>  
-              val sliceAttrs = attributesOfExpression(slice).map { _.exprId }
-              if(sliceAttrs.exists { isLeft(_) } && sliceAttrs.exists { isRight(_) }) {
-                attr -> fixUnsafeSlice(slice, Literal(true), isLeft(attr))
-              } else { 
-                attr -> slice
-              }
-            }.toMap
             .partition { attr => isLeft(attr._1) }
 
         logger.trace(s"Propagating Left: \nRow: $rowSliceLeftMaybe\nAttrs: $attributesToPropagateLeft")
         logger.trace(s"Propagating Right: \nRow: $rowSliceRightMaybe\nAttrs: $attributesToPropagateRight")
-        assert(
+        // sanity checks
+        for(attr <- 
           rowSliceLeftMaybe
             .toSet
-            .flatMap { attributesOfExpression(_) }
-            .map { _.exprId }
-            .forall { isLeft(_) }
-        )
-        assert(
+            .flatMap { attributesOfExpression(_) })
+        {
+          assert(isLeft(attr.exprId), {
+            s"Trying to propagate row slice $rowSliceLeftMaybe left with RHS attribute $attr"
+          })
+        }
+        for(attr <- 
           rowSliceRightMaybe
             .toSet
-            .flatMap { attributesOfExpression(_) }
-            .map { _.exprId }
-            .forall { isRight(_) }
-        )
-        assert(
-          attributesToPropagateLeft
-            .values
-            .flatMap { attributesOfExpression(_) }
-            .map { _.exprId }
-            .toSet
-            .forall( isLeft(_) )
-        )
-        assert(
-          attributesToPropagateRight
-            .values
-            .flatMap { attributesOfExpression(_) }
-            .map { _.exprId }
-            .toSet
-            .forall( isRight(_) )
-        )
+            .flatMap { attributesOfExpression(_) })
+        {
+          assert(isRight(attr.exprId), {
+            s"Trying to propagate row slice $rowSliceRightMaybe right with LHS attribute $attr"
+          })
+        }
+        for( (attr, slice) <- attributesToPropagateLeft ){
+          val rhsAttrs = attributesOfExpression(slice).filter { a => isRight(a.exprId) }
+          assert(rhsAttrs.isEmpty, {
+            s"Trying to propagate attribute $attr slice $slice left with RHS attributes $rhsAttrs"
+          })
+        }
+        for( (attr, slice) <- attributesToPropagateRight ){
+
+          val lhsAttrs = attributesOfExpression(slice).filter { a => isLeft(a.exprId) }
+          assert(lhsAttrs.isEmpty, {
+            s"Trying to propagate attribute $attr slice $slice right with LHS attributes $lhsAttrs"
+          })
+        }
 
         return recurPlan(
                   row = rowSliceLeftMaybe,
@@ -462,7 +467,7 @@ object EnumeratePlanCaveats
                   row = rowSliceRightMaybe,
                   attributes = attributesToPropagateRight,
                   sort = false, // Joins force a reorder
-                  plan = left
+                  plan = right
                )
       }
 
