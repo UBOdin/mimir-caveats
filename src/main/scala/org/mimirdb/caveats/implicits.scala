@@ -177,10 +177,12 @@ class DataFrameImplicits(df:DataFrame)
                                 .analyzed
                                 .output
                                 .map { _.name }
-                                .toSet
+                                .toSet,
+    constraint: Column = lit(true)
   ) = EnumeratePlanCaveats(df.queryExecution.analyzed)(
         row = row,
-        attributes = attributes
+        attributes = attributes,
+        constraint = constraint.expr
       )
   def listCaveats(
     row: Boolean = true,
@@ -188,8 +190,10 @@ class DataFrameImplicits(df:DataFrame)
                                 .analyzed
                                 .output
                                 .map { _.name }
-                                .toSet
-  ) = listCaveatSets(row, attributes).flatMap { _.all(df.sparkSession) }
+                                .toSet,
+    constraint: Column = lit(true)
+  ) = listCaveatSets(row, attributes, constraint)
+        .flatMap { _.all(df.sparkSession) }
 
   def isAnnotated =
     df.queryExecution

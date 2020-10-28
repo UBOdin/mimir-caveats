@@ -276,27 +276,27 @@ object EnumeratePlanCaveats
       case Join(left, right, joinType, conditionMaybe, hint) => 
       {
 
+        // We conly care about row-level caveats if `row` is Some
+        // Similarly, the Join only affects row-level caveats if
+        // `conditionMaybe` is Some.  Join the two.  The following
+        // variable is Some if and only if both `row` and 
+        // `conditionMaybe` are Some.
         val rowAndCondition = row.flatMap { r => conditionMaybe.map { (r, _) } }
 
-        val localCaveats = 
-          rowAndCondition.map { case (row, condition) =>
-              EnumerateExpressionCaveats(plan, condition, row) 
-            }.getOrElse { Seq[CaveatSet]() }
-
-        val fieldDependenciesToPropagate =
-          mergeVerticalSlices(
-            rowAndCondition.map { case (row, condition) => 
-              ExpressionDependency.attributes(condition, row).toSeq 
-            }.getOrElse { Seq[(ExprId,Expression)]() } ++
-            attributes.toSeq
-          )
-
+        // Precompute sets to test for whether an attribute comes
+        // from the LHS or RHS.
         val isLeft = left.output.map { _.exprId }.toSet
         val isRight = right.output.map { _.exprId }.toSet
 
-        val (attributesToPropagateLeft, attributesToPropagateRight) =
-          fieldDependenciesToPropagate.partition { field => isLeft(field._1) }
+        // Figure out what caveats this specific operator introduces.
+        val localCaveats = 
+          rowAndCondition.map { case (row, condition) =>
+              EnumerateExpressionCaveats(plan, condition, row) 
+          }.getOrElse { Seq[CaveatSet]() }
 
+        // Next, figure out how to propagate row-level dependencies
+        // Start by splitting up the row condition into individual
+        // conjunctive predicates.
         val rowPredicates = 
           row.map { splitAnd(_) }.getOrElse { Seq() }
              .map { pred => 
@@ -304,22 +304,154 @@ object EnumeratePlanCaveats
                   attributesOfExpression(pred).map { _.exprId }
              }
 
-        val itIsSafeToPropagateRow =
-          rowPredicates.exists { case (_, attrs) =>
+        // Split these predicates into those that are safe (i.e., 
+        // rely on attributes on only one side of the join), or 
+        // unsafe (i.e., rely on attributes on both sides)
+        val (safeRowPredicates, unsafeRowPredicates) =
+          rowPredicates.partition { case (_, attrs) =>
             (isLeft & attrs).isEmpty || (isRight & attrs).isEmpty
           }
-        val (rowSliceLeft, rowSliceRight) = 
-          rowPredicates.partition { case (pred, attrs) =>
-                                    !(attrs & isLeft).isEmpty 
-                                  }
+
+        logger.trace(s"Safe join row predicates: $safeRowPredicates")
+        logger.trace(s"Unsafe join row predicates: $unsafeRowPredicates")
+
+        // Split the safe predicates into those affecting the LHS
+        // and those affecting the RHS
+        val (safeRowSliceLeft, safeRowSliceRight) = 
+          safeRowPredicates.partition { case (pred, attrs) =>
+                                          !(attrs & isLeft).isEmpty 
+                                      }
         
-        val (rowSliceLeftMaybe, rowSliceRightMaybe) = 
+        // If we have unsafe predicates in the slice, we need to fix them
+        // There are two ways to do this... I'm leaving both in so that we 
+        // can quickly adapt as needed.
+        
+        ////// Option 1: Conservative approximation
+        // def fixUnsafeSlice(unsafeSlicePredicate: Expression, safeSlicePredicate: Expression, leftHandSide: Boolean): Expression = 
+        //   Literal(true)
+
+        ////// Option 2: Nested subquery
+        def fixUnsafeSlice(unsafeSlicePredicate: Expression, safeSlicePredicate: Expression, leftHandSide: Boolean): Expression = 
+          foldAnd(
+          // for the LHS, we want to join in the RHS (and visa versa)
+          // Spark apparently will do the heavy lifting of figuring
+          // out which attributes are meant to be correlated.
+            Exists(
+              (if(leftHandSide) { right } else { left }),
+              Seq(unsafeSlicePredicate), 
+            ),
+            safeSlicePredicate
+          )
+
+
+        // Finally, compute the slices we care about from the LHS and 
+        // RHS respectively
+        val (rowSliceLeftMaybe, rowSliceRightMaybe):(Option[Expression], Option[Expression]) = 
+          // If we aren't looking for row-level caveats, we're done
           if(row.equals(None)) { (None, None) } else {
-            (
-              Some(foldAnd(rowSliceLeft.map { _._1 }:_*)),
-              Some(foldAnd(rowSliceRight.map { _._1 }:_*)),
-            )
+
+            // If we are looking for row-level caveats, first figure
+            // out if we're only dealing with safe constraints.  That's
+            // the easy case (just recombine the individual predicates)
+            if(unsafeRowPredicates.isEmpty){
+              (
+                Some(foldAnd(safeRowSliceLeft.map { _._1 }:_*)),
+                Some(foldAnd(safeRowSliceRight.map { _._1 }:_*)),
+              )
+            } else { 
+              val unsafeSlice: Expression = 
+                foldAnd(unsafeRowPredicates.map { _._1 }:_*)
+              (
+                Some(fixUnsafeSlice(
+                  unsafeSlice,
+                  foldAnd(safeRowSliceLeft.map { _._1 }:_*),
+                  true
+                )),
+                Some(fixUnsafeSlice(
+                  unsafeSlice,
+                  foldAnd(safeRowSliceRight.map { _._1 }:_*),
+                  false
+                ))
+              )
+            }
           }
+
+        // Now start figuring out attribute dependencies.  IF...
+        // 1. We're looking for row caveats, AND
+        // 2. The join has a condition, THEN
+        // we may be introducing some new attribute dependencies here.
+        // Remember though that we only care about these dependencies
+        // on rows where there exists a row condition
+        val attributeDependenciesFromJoinCondition: Seq[(ExprId, Expression)] =
+        rowAndCondition.map { case (row, condition) => 
+            ExpressionDependency
+              .attributes(condition)
+              .toSeq 
+              // fold in the appropriate LHS or RHS row dependency
+              .map { case (exprId, sliceCondition) => 
+                // get is safe here because row must be Some
+                ( exprId, 
+                  if(isLeft(exprId)){ foldAnd(sliceCondition, rowSliceLeftMaybe.get) }
+                  else {              foldAnd(sliceCondition, rowSliceRightMaybe.get) }
+                )
+              }
+          }.getOrElse { Seq[(ExprId,Expression)]() }
+
+        logger.trace(s"Join condition dependencies: $attributeDependenciesFromJoinCondition")
+
+        // Translate the slice of the output attributes that we're being
+        // asked to propagate into a corresponding slice on input attributes.
+        val attributeDependenciesToPropagate =
+          mergeVerticalSlices(
+            attributeDependenciesFromJoinCondition
+             ++
+            attributes.toSeq
+          )
+
+        val (attributesToPropagateLeft, attributesToPropagateRight) =
+          attributeDependenciesToPropagate
+            .map { case (attr, slice) =>  
+              val sliceAttrs = attributesOfExpression(slice).map { _.exprId }
+              if(sliceAttrs.exists { isLeft(_) } && sliceAttrs.exists { isRight(_) }) {
+                attr -> fixUnsafeSlice(slice, Literal(true), isLeft(attr))
+              } else { 
+                attr -> slice
+              }
+            }.toMap
+            .partition { attr => isLeft(attr._1) }
+
+        logger.trace(s"Propagating Left: \nRow: $rowSliceLeftMaybe\nAttrs: $attributesToPropagateLeft")
+        logger.trace(s"Propagating Right: \nRow: $rowSliceRightMaybe\nAttrs: $attributesToPropagateRight")
+        assert(
+          rowSliceLeftMaybe
+            .toSet
+            .flatMap { attributesOfExpression(_) }
+            .map { _.exprId }
+            .forall { isLeft(_) }
+        )
+        assert(
+          rowSliceRightMaybe
+            .toSet
+            .flatMap { attributesOfExpression(_) }
+            .map { _.exprId }
+            .forall { isRight(_) }
+        )
+        assert(
+          attributesToPropagateLeft
+            .values
+            .flatMap { attributesOfExpression(_) }
+            .map { _.exprId }
+            .toSet
+            .forall( isLeft(_) )
+        )
+        assert(
+          attributesToPropagateRight
+            .values
+            .flatMap { attributesOfExpression(_) }
+            .map { _.exprId }
+            .toSet
+            .forall( isRight(_) )
+        )
 
         return recurPlan(
                   row = rowSliceLeftMaybe,
@@ -508,6 +640,17 @@ object EnumeratePlanCaveats
 
   }
 
+  /**
+   * Compute the union of two vertical slices.
+   * 
+   * A slice indicates some (potentially non-contiguous) region of a 
+   * dataframe.  A slice is normally given as Map of column/expression 
+   * pairs, where the expression indicates the subset of rows for which
+   * the given column is to be indicated.
+   * 
+   * This operation takes a set of column/expression pairs and merges
+   * them together, computing the UNION of two slices.
+   */
   def mergeVerticalSlices(
     deps: Seq[(ExprId, Expression)]
   ): Map[ExprId, Expression] =
@@ -515,7 +658,7 @@ object EnumeratePlanCaveats
     logger.trace(s"Merge Vertical Slices: $deps")
     val ret = 
       deps.groupBy(_._1)
-        .mapValues { deps => foldOr(deps.map { _._2 }.toSeq:_*) }
+          .mapValues { deps => foldOr(deps.map { _._2 }.toSeq:_*) }
     logger.trace(s"... returning : $ret")
     return ret
   }

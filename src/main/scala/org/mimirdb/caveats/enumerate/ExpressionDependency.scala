@@ -79,6 +79,27 @@ class ExpressionDependency[T]
 object ExpressionDependency
 {
 
+  /**
+   * Collect data based on the dependencies of an expression.
+   * @param  expr       The expression to check for attribute dependencies
+   * @param  vSlice     The slice under which the dependency exists
+   * @param  aggregates How to interact with aggregate functions
+   * @param  detector   The collection rule visitor (slice => visitedExpr => output)
+   * @return            A slice (a map of exprID -> condition)
+   *
+   * A slice indicates some (potentially non-contiguous) region of a 
+   * dataframe.  A slice is normally given as Map of column/expression 
+   * pairs, where the expression indicates the subset of rows for which
+   * the given column is to be indicated.
+   * 
+   * apply() starts with the default slice given in vSlice, but 
+   * refines it as it iterates through the expression.  For example, 
+   * given the expression `A OR B`, the slice when visiting `A` will
+   * be `vSlice OR NOT B`.
+   * 
+   * The dectector is a partial function indicating which expressions
+   * need to be collected, and the left hand side input is the slice.
+   */
   def apply[T](
     expr: Expression, 
     vSlice: Expression = Literal(true),
@@ -87,6 +108,18 @@ object ExpressionDependency
     detector: Expression => PartialFunction[Expression, T]
   ) = new ExpressionDependency(detector, aggregates)(expr, vSlice, false)
 
+  /**
+   * Return the attributes on which a given expression depends, coupled
+   * with the conditions under which the dependency exists.
+   * @param  expr       The expression to check for attribute dependencies
+   * @param  vSlice     The slice under which the dependency exists
+   * @return            A slice (a map of exprID -> condition)
+   *
+   * A slice indicates some (potentially non-contiguous) region of a 
+   * dataframe.  A slice is normally given as Map of column/expression 
+   * pairs, where the expression indicates the subset of rows for which
+   * the given column is to be indicated.
+   */
   def attributes(
     expr: Expression,
     vSlice: Expression = Literal(true)

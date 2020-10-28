@@ -8,7 +8,16 @@ object expressionLogic
 {
   def attributesOfExpression(e: Expression):Set[Attribute] =
   {
-    e.collect[Attribute] { case a: Attribute => a }.toSet
+    e match { 
+      case a: Attribute => Set(a)
+      case s: SubqueryExpression => 
+        (
+          s.children.flatMap { attributesOfExpression(_) }.toSet 
+            -- 
+          s.plan.output.toSet
+        )
+      case _ => e.children.flatMap { attributesOfExpression(_) }.toSet
+    }
   }
 
   // /**
@@ -70,7 +79,7 @@ object expressionLogic
   def inline(e: Expression, replacements: Map[ExprId,Expression]): Expression =
   {
     e match {
-      case a:Attribute => replacements(a.exprId)
+      case a:Attribute => replacements.getOrElse(a.exprId, a)
       case _ => e.mapChildren { inline(_, replacements) }
     }
   }
