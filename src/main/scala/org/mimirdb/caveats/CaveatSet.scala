@@ -1,3 +1,4 @@
+
 package org.mimirdb.caveats
 
 import org.apache.spark.sql.{ DataFrame, SparkSession }
@@ -20,7 +21,7 @@ abstract class CaveatSet
 }
 
 
-class SingletonCaveatSet(caveat: Caveat)
+class SingletonCaveatSet(val caveat: Caveat)
   extends CaveatSet
 {
   def size(ctx: SparkSession) = 1
@@ -28,11 +29,15 @@ class SingletonCaveatSet(caveat: Caveat)
   def all(ctx: SparkSession) = Seq(caveat)
   def isEmpty(ctx: SparkSession) = false
   def isEmptyExpression = Literal(false)
+
+
+  override def toString() = 
+    s"SINGLETON CAVEAT $caveat"
 }
 
 class EnumerableCaveatSet(
-  plan: LogicalPlan, 
-  family: Option[String]
+  val plan: LogicalPlan, 
+  val family: Option[String]
 ) extends CaveatSet
 {
 
@@ -59,4 +64,8 @@ class EnumerableCaveatSet(
       ),
       Literal(0)
     )
+
+  override def toString() = 
+    "ENUMERABLE CAVEAT" + (family.map { " ("+_+")" }.getOrElse("")) + "\n" + 
+      plan.toString
 }

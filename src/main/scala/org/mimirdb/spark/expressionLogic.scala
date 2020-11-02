@@ -13,7 +13,7 @@ object expressionLogic
       case s: SubqueryExpression => 
       {
         val isPlanAttribute = s.plan.output.map { _.exprId }.toSet
-        print(s"PLAN ATTRIBUTES: $isPlanAttribute")
+        // print(s"PLAN ATTRIBUTES: $isPlanAttribute")
         (
           s.children
            .flatMap { attributesOfExpression(_) }
