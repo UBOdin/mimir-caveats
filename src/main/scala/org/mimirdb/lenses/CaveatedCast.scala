@@ -20,14 +20,15 @@ object CaveatedCast
       // If canUpCast returns true, then this conversion is guaranteed to be loss-less, and the
       // caveat will never be applied (in which case, we can just return the expression as-is)
       logger.trace(s"CaveatedCast: $expr -> $t (safe)")
-      return expr
+      if(expr.dataType.equals(t)){ expr } 
+      else { Cast(expr, t, tzinfo) }
     } else {
       logger.trace(s"CaveatedCast: $expr -> $t (caveat needed)")
       return ApplyCaveat(
         value = Cast(expr, t, tzinfo), 
         message = Concat(Seq(
           Literal("Could not cast '"),
-          Coalesce(Seq(Cast(expr, StringType), Literal("'NULL'"))),
+          Coalesce(Seq(Cast(expr, StringType, tzinfo), Literal("'NULL'"))),
           Literal(s"' to $t (${Option(context).getOrElse { "in "+expr.toString }})")
         )),
         family = family,
