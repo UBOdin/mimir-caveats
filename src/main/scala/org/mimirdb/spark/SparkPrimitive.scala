@@ -106,7 +106,9 @@ object SparkPrimitive
   {
     (k, t) match {  
       case (JsNull, _)                    => null
-      case (_, StringType)                => k.as[String]
+      case (JsString(str), StringType)    => str
+      case (JsNumber(num), StringType)    => num.toString()
+      case (JsBoolean(b), StringType)     => b.toString()
       case (_:JsString, _) if castStrings => Cast(Literal(k.as[String]), t).eval()
       case (_, BinaryType)                => base64Decode(k.as[String])
       case (_, BooleanType)               => k.as[Boolean]
