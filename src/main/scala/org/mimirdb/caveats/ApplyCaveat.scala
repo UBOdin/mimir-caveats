@@ -25,7 +25,7 @@ case class ApplyCaveat(
     value.genCode(ctx)
   def eval(input: InternalRow) = value.eval(input)
   def nullable = value.nullable
-  def children = Seq(value, message) ++ key
+  def children = Seq(value, message) ++ key :+ condition
 
   def onPlan(plan: LogicalPlan): CaveatSet =
   {
