@@ -1,5 +1,5 @@
 name := "mimir-caveats"
-version := "0.2.9-SNAPSHOT"
+version := "0.2.9"
 organization := "org.mimirdb"
 scalaVersion := "2.12.10"
 
