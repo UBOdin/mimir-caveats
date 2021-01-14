@@ -28,7 +28,7 @@ object CaveatedDeduplicate
       nonKeyAttrs.map { attr =>
         Alias(
           ApplyCaveat(
-            First(attr, Literal(true))
+            First(attr, true)
               .toAggregateExpression(false),
             Literal(s"Multiple Values for ${attr.name}${if(context != null){ " "+context } else { "" }}"),
             family = family,

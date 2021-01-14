@@ -88,6 +88,7 @@ class CaveatExistsInPlan(
         newPlan = plan,
         default = Literal(false)
       )
+    // assert(plan.analyzed, s"annotating non-analyzed plan: $plan")
 
     // Each operator has its own interactions with caveats.  Force an explicit
     // matching rather than using Spark's tree recursion operators and default
@@ -385,8 +386,6 @@ class CaveatExistsInPlan(
 
         val rowAnnotation = negate(groupIsGuaranteedToHaveRows)
 
-
-
         val attrAnnotations =
           aggregateExpressions.map { aggr =>
             // If group membership depends on a caveat, it becomes necessary to
@@ -396,7 +395,7 @@ class CaveatExistsInPlan(
             // Additionally,
             // TODO: refine this so that group-by attributes don't get annotated
             // TODO: move grouping caveats out to table-level?
-            aggr.toAttribute ->
+            getResolvedAttribute(aggr) ->
               foldOr(
                 annotateAggregate(aggr),
                 aggregateBoolOr(
@@ -415,6 +414,7 @@ class CaveatExistsInPlan(
             oldPlan = plan,
             newChild = child,
             replace = attrAnnotations,
+            attributes = attrAnnotations,
             row = rowAnnotation
           )
 
@@ -431,6 +431,12 @@ class CaveatExistsInPlan(
         if(pedantic && !groupMembershipDependsOnACaveat.equals(Literal(false))){
 
           val groupContaminant = AttributeReference("__MIMIR_ALL_GROUPS_CONTAMINATED", BooleanType)()
+
+          val attrAnnotations = 
+            aggregateExpressions
+              .map { getResolvedAttribute(_) }
+              .map { attr => attr -> foldOr(internalEncoding.annotationFor(attr),
+                                            groupContaminant) }
 
           internalEncoding.annotate(
             oldPlan = plan,
@@ -449,11 +455,9 @@ class CaveatExistsInPlan(
                 None,
                 JoinHint.NONE
               ),
-            replace =
-              aggregateExpressions
-                  .map { _.toAttribute }
-                  .map { attr => attr -> foldOr(internalEncoding.annotationFor(attr),
-                                                groupContaminant) }
+            replace = attrAnnotations,
+            attributes = attrAnnotations
+              
           )
         } else { ret }
       }
@@ -641,6 +645,31 @@ class CaveatExistsInPlan(
       // for example, if we're reading from a materialized view.  That's
       // fine... create a fake projection on top and try again
       case _ => recoverExistingAnnotations(Project(plan.output, plan))
+    }
+  }
+
+  /**
+   * Convert a (resolved) named expression to a *resolved* attribute, regardless 
+   * of what Spark thinks you should get.
+   * 
+   * This function exists because calling _.toAttribute on an Alias 
+   * expression will sometimes not return a resolved attribute, even though
+   * there is an exprId
+   */
+  def getResolvedAttribute(base: NamedExpression) =
+  {
+    base match {
+      case a:Alias => 
+        AttributeReference(
+          a.name,
+          a.child.dataType,
+          a.child.nullable,
+          a.metadata,
+        )(
+          a.exprId,
+          a.qualifier
+        )
+      case _ => base.toAttribute
     }
   }
 }
