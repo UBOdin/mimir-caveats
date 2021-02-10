@@ -1,5 +1,5 @@
 name := "mimir-caveats"
-version := "0.3.1-SNAPSHOT"
+version := "0.3.1"
 organization := "org.mimirdb"
 scalaVersion := "2.12.10"
 
@@ -23,10 +23,6 @@ resolvers += "MimirDB" at "https://maven.mimirdb.info/"
 resolvers += Resolver.typesafeRepo("releases")
 resolvers += DefaultMavenRepository
 resolvers ++= Seq("snapshots", "releases").map(Resolver.sonatypeRepo)
-
-excludeDependencies ++= Seq(
-  ExclusionRule(organization = "javax.servlet")
-)
 
 // Custom Dependencies
 libraryDependencies ++= Seq(
