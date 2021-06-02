@@ -19,12 +19,14 @@ import org.mimirdb.caveats.Constants._
 
 import org.mimirdb.spark.sparkWorkarounds._
 import org.apache.spark.sql.SparkSession
+import com.typesafe.scalalogging.LazyLogging
 
 /**
   * main entry point for caveat rewriting that dispatches to a particular [AnnotationInstrumentationStrategy]
   * for a particular [AnnotationType].
   */
 object Caveats
+  extends LazyLogging
 {
 
   var defaultAnnotator: AnnotationInstrumentationStrategy = CaveatExists()
@@ -61,10 +63,8 @@ object Caveats
     val annotSchema = if (annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema)) baseSchema else
           annotator.outputEncoding.annotatedSchema(baseSchema, annotationAttribute)
 
-    if(trace) {
-      println("is already annotated? " + annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema))
-      println(s"base schema: $baseSchema \n\nrow encoder $annotSchema")
-    }
+    logger.trace(s"is already annotated? ${annotator.outputEncoding.isValidAnnotatedStructTypeSchema(baseSchema)}")
+    logger.trace(s"base schema: $baseSchema \n\nrow encoder $annotSchema")
 
     dataset.planToDF(annotated)
 
@@ -93,11 +93,9 @@ object Caveats
           annotator.outputEncoding.annotatedSchema(normalAttrs)
         )
 
-    if (trace) {
-      println("========================================\nTIP REWRITE\n========================================")
-      println("Normal attributes:\n" + normalAttrs)
-      println("Row encdoer:\n" + rowEncoder)
-    }
+    logger.trace("========================================\nTIP REWRITE\n========================================")
+    logger.trace("Normal attributes:\n$normalAttrs")
+    logger.trace("Row encdoer:\n$rowEncoder")
     return new DataFrame(
       df.queryExecution.sparkSession,
       annotated,
