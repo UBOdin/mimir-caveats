@@ -7,12 +7,19 @@ import org.mimirdb.spark.expressionLogic.{
   foldOr,
   foldAnd, 
   inline,
+  simplify, 
   attributesOfExpression,
   splitAnd,
   isAggregate
 }
 import com.typesafe.scalalogging.LazyLogging
 import scala.{ Left, Right }
+import org.apache.spark.sql.catalyst.plans.{
+  LeftOuter,
+  FullOuter,
+  Cross,
+  RightOuter
+}
 
 /**
  * A class for enumerating caveats applied to a specified plan.
@@ -114,7 +121,7 @@ object EnumeratePlanCaveats
     def PASS_THROUGH_TO_CHILD(u: UnaryNode) = 
       recurPlan(row, attributes, sort, u.child)
 
-    logger.trace(s"ENUMERATING($row, $attributes, $sort)\n$plan")
+    logger.trace(s"ENUMERATING(\n  ROW = $row, \n  ATTRIBUTES = $attributes, \n  SORT = $sort\n)\n$plan")
 
     plan match {
 
@@ -147,7 +154,7 @@ object EnumeratePlanCaveats
             .mapValues { deps => foldOr(deps.map { _._2 }:_*) }
 
         val childCaveats = recurPlan(
-          row = row.map { inline(_, projectList) },
+          row = row.map { e => inline(e, projectList) },
           attributes = childDependenciesByField,
           sort = sort,
           plan = child
@@ -251,7 +258,8 @@ object EnumeratePlanCaveats
         // We only care about caveats pertaining to the output rows, so
         // AND the slices with the filter condition.
         val childCaveats = recurPlan(
-          row = row.map { foldAnd(_, condition) },
+          row = Some(row.map { e => foldAnd(e, condition) }
+                        .getOrElse { condition }),
           attributes = fieldDependenciesToPropagate.mapValues { foldAnd(_, condition) },
           sort = sort,
           plan = child
@@ -332,14 +340,54 @@ object EnumeratePlanCaveats
         //   Literal(true)
 
         ////// Option 2: Nested subquery
-        def fixUnsafeSlice(unsafeSlicePredicate: Either[Expression,Expression], safeSlicePredicate: Expression): Expression = 
+
+        // The idea here is that we do an existential test for potential matches.  Into the
+        // left-hand-side, we push an existential test for the condition on the RHS, and 
+        // visa versa.  A tuple on the LHS is thus only present if there is a potential match
+        // arising from the RHS.  
+
+        // In general, spark will do most of the heavy lifting here, but there is a little
+        // bit of a catch.  Spark's Exists operator does not have a reentrant scope.  Take
+        // the expression:
+        //   Exists(Q1, Seq(Exists(Q2, Seq(expr))))
+        // Here, variables in Q1 are not available for expr.  As a result, Exists tests
+        // of this sort need to be unnested.  That's what the following function does.
+        def foldExistentials(slice: Seq[Expression], plan: LogicalPlan): Expression =
           foldAnd(
-          // for the LHS, we want to join in the RHS (and visa versa)
-          // Spark apparently will do the heavy lifting of figuring
-          // out which attributes are meant to be correlated.
+            slice.map { 
+              case Exists(subPlan, children, exprId) => 
+                Exists(
+                  Join(plan, subPlan, Cross, None, JoinHint.NONE),
+                  children
+                )
+              case sliceElement => 
+                Exists(plan, Seq(sliceElement))
+            }:_*
+          )
+
+        def fixUnsafeSlice(unsafeSlicePredicate: Either[Seq[Expression],Seq[Expression]], safeSlicePredicate: Expression): Expression = 
+          foldAnd(
+            // for the LHS, we want to join in the RHS (and visa versa)
+            // Spark will **usually** do the heavy lifting of figuring
+            // out which attributes are meant to be correlated.
             unsafeSlicePredicate match {
-              case Left(slice) => Exists(right, Seq(slice))
-              case Right(slice) => Exists(left, Seq(slice))
+
+              // Outer joins are a bit funky.  For the LHS, either there exists a condition 
+              // match on the RHS for the sliced row, OR there is no match, but the condition
+              // evaluates to true with NULL filed in for the values.  Visa versa for the RHS.
+              // Refining this may prove useful in the future, but for now, just return the
+              // entire L/RHS for an appropriate outer join.
+
+              case Left(_) if joinType == LeftOuter || joinType == FullOuter => 
+                Literal(true)
+              case Right(_) if joinType == RightOuter || joinType == FullOuter => 
+                Literal(true)
+
+              // In general, the unsafeSlicePredicate needs to be converted into an
+              // existential test for a potential match.  See above for why we need
+              // to use this helper function.
+              case Left(slice) => foldExistentials(slice, right)
+              case Right(slice) => foldExistentials(slice, left)
             },
             safeSlicePredicate
           )
@@ -360,8 +408,8 @@ object EnumeratePlanCaveats
                 Some(foldAnd(safeRowSliceRight.map { _._1 }:_*)),
               )
             } else { 
-              val unsafeSlice: Expression = 
-                foldAnd(unsafeRowPredicates.map { _._1 }:_*)
+              val unsafeSlice: Seq[Expression] = 
+                unsafeRowPredicates.map { _._1 }
               (
                 Some(fixUnsafeSlice(
                   Left(unsafeSlice),
@@ -409,7 +457,8 @@ object EnumeratePlanCaveats
                 val sliceAttrs = attributesOfExpression(slice).map { _.exprId }
                 if(sliceAttrs.exists { isLeft(_) } && sliceAttrs.exists { isRight(_) }) {
                   attr -> fixUnsafeSlice(
-                    if(isLeft(attr)) { Left(slice) } else { Right(slice) },
+                    if(isLeft(attr)) { Left(splitAnd(slice)) } 
+                    else             { Right(splitAnd(slice)) },
                     Literal(true)
                   )
                 } else { 

@@ -66,7 +66,7 @@ class EnumerateSpec
       testDF.select(
         testDF("A") as "C",
         testDF("B") as "D"
-      ).join(testDF, col("B") === col("C"), "leftouter")
+      ).join(testDF, col("B") === col("C"), "inner")
        .select(col("B"), col("C"), col("A") + col("D") as "E")
 
     df.listCaveats(

@@ -78,13 +78,37 @@ object expressionLogic
     )
   }
 
+  def simplify(e: Expression): Expression =
+  {
+    // println(s"SIMPLIFY: $e")
+    if(e.references.isEmpty){ Literal(e.eval(), e.dataType) }
+    else { 
+      e.mapChildren { 
+        case r:RuntimeReplaceable => simplify(r.child)
+        case x => simplify(x) 
+      } 
+    }
+  }
+
   def inline(e: Expression, projectionList: Seq[NamedExpression]): Expression =
     inline(e, projectionList.map { expr => expr.exprId -> expr }.toMap)
 
   def inline(e: Expression, replacements: Map[ExprId,Expression]): Expression =
   {
     e match {
+      // Base case: An attribute that can be replaced
       case a:Attribute => replacements.getOrElse(a.exprId, a)
+
+      // RuntimeReplaceable expressions are internally equivalent to/replacable
+      // with their _.child field.  The outer shell may have other subexpressions,
+      // but these are only ever used for display purposes.  Unfortunately, 
+      // _.mapChildren only gets applied to the _.child field, so inlining ends
+      // up creating expression trees that make no sense when printed.  In the
+      // interest of making debugging easier, just flatten out the expression
+      // here and now.  
+      case r:RuntimeReplaceable => inline(r.child, replacements)
+
+      // Recursive case: Replace all descendants.
       case _ => e.mapChildren { inline(_, replacements) }
     }
   }
