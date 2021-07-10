@@ -42,7 +42,7 @@ class EnumerableCaveatSet(
 {
 
   def withContext[T](ctx: SparkSession)(op: DataFrame => T): T =
-    op(new DataFrame(ctx, plan, RowEncoder(plan.schema)))
+    op(new DataFrame(ctx, Caveats.strip(plan), RowEncoder(plan.schema)))
 
   def size(ctx: SparkSession) = 
     withContext(ctx) { _.count() }
@@ -67,5 +67,6 @@ class EnumerableCaveatSet(
 
   override def toString() = 
     "ENUMERABLE CAVEAT" + (family.map { " ("+_+")" }.getOrElse("")) + "\n" + 
-      plan.toString
+      plan.toString + "\n----\n" +
+      Caveats.strip(plan)
 }

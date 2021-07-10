@@ -59,6 +59,7 @@ class ExpressionDependency[T]
                     (branchSlice: Expression, branchResult: Expression)) => 
               (
                 detectedList ++
+                  apply(branchSlice, currentSlice, inAgg) ++
                   apply(branchResult, foldAnd(currentSlice, branchSlice), inAgg),
                 foldAnd(currentSlice, negate(branchSlice))
               )
