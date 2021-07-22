@@ -202,7 +202,8 @@ class CaveatExistsInPlan(
           CaveatExistsInExpression(expr).
         */
         val conditionAnnotation = annotateExpression(condition)
-        val conditionReplacedHasCaveat = CaveatExistsInExpression.replaceHasCaveat(condition)
+        val conditionReplacedHasCaveat = 
+          CaveatExistsInExpression.replaceHasCaveat(condition)
         val rewrittenChild = annotate(child)
         internalEncoding.annotate(
           oldPlan = plan,

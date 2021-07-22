@@ -101,7 +101,7 @@ class CaveatExistsInExpression(
       // caveated.
       case sq: SubqueryExpression =>
       {
-        val subqueryWithCaveats = compilePlan(sq.plan)
+        val subqueryWithCaveats = compilePlan.annotate(sq.plan)
         val correlatedCaveats = sq.children.map { apply(_) }
 
         foldOr((
