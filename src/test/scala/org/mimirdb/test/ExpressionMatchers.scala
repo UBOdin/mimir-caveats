@@ -20,7 +20,7 @@ trait ExpressionMatchers
       if(childCmp.isEmpty) {
         def decorate(e: Expression): String = {
           (Seq(e.getClass.toString) ++ (e match {
-            case Cast(_, _, tz) => Seq(s"Timezone: $tz")
+            case Cast(_, _, tz, ansiEnabled) => Seq(s"Timezone: $tz; ansiEnabled: $ansiEnabled")
             case _ => Seq()
           })).mkString(", ")
         }

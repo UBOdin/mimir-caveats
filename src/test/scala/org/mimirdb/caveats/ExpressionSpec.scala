@@ -48,12 +48,12 @@ class ExpressionSpec
     // println(s"SCHEMA: $schema")
     val testColumn =
       wrapper.output.find { _.name.equals("TEST") }.get
-    val testAnnotationColumn =
-      CaveatExistsAttributeAnnotation.annotationFor(testColumn)
+    val testAnnotationColumnName = 
+      CaveatExistsAttributeAnnotation.ATTR_ANNOTATION(testColumn)
     val result =
       wrapper
         .projectList
-        .find { _.toAttribute.exprId.equals(testAnnotationColumn.exprId) }
+        .find { _.name == testAnnotationColumnName }
         .get
         .children(0) // Strip off the Alias
         // .asInstanceOf[CreateNamedStruct]

@@ -61,7 +61,7 @@ class CaveatExistsInExpression(
    * @param   expr  The expression to find the annotation of
    * @return        An expression that evaluates to true if expr is caveatted
    **/
-  def apply(expr: Expression): Expression =
+  def apply(expr: Expression, inputDescription: IntermediateEncodingDescription): Expression =
   {
     // Derive a set of conditions under which  the input expression will be
     // caveatted.  By default, this occurs whenever a caveat is present or when
@@ -79,9 +79,9 @@ class CaveatExistsInExpression(
       // however, exclude global caveats.
       case caveat: ApplyCaveat =>
         if(pedantic || !caveat.global) {
-          foldOr(caveat.condition, apply(caveat.value))
+          foldOr(caveat.condition, apply(caveat.value, inputDescription))
         }
-        else { apply(caveat.value) }
+        else { apply(caveat.value, inputDescription) }
 
       // Attributes are caveatted if they are caveated in the input.
       //
@@ -89,9 +89,9 @@ class CaveatExistsInExpression(
       // attributes (e.g., part of the grouping expressions).  If so, the
       // corresponding annotation lookup needs to be wrapped in an aggregate.
       case a: Attribute if expectAggregate =>
-        aggregateBoolOr(compilePlan.internalEncoding.annotationFor(a))
+        aggregateBoolOr(inputDescription.annotationFor(a))
 
-      case a: Attribute => compilePlan.internalEncoding.annotationFor(a)
+      case a: Attribute => inputDescription.annotationFor(a)
 
 
       // This represents one of several forms of subquery (e.g., exists, in a.k.a. list, or
@@ -101,8 +101,8 @@ class CaveatExistsInExpression(
       // caveated.
       case sq: SubqueryExpression =>
       {
-        val subqueryWithCaveats = compilePlan.annotate(sq.plan)
-        val correlatedCaveats = sq.children.map { apply(_) }
+        val (subqueryWithCaveats, subqueryDescription) = compilePlan.annotate(sq.plan)
+        val correlatedCaveats = sq.children.map { apply(_, inputDescription) }
 
         foldOr((
           correlatedCaveats :+
@@ -112,11 +112,11 @@ class CaveatExistsInExpression(
               Seq(Alias(
                 aggregateBoolOr(
                   foldOr(
-                    compilePlan.internalEncoding.annotationForRow,
+                    subqueryDescription.annotationForRow,
                     foldOr(
                       sq.plan.output
-                        .map { attr => compilePlan.internalEncoding
-                                                  .annotationFor(attr)
+                        .map { attr => subqueryDescription
+                                         .annotationFor(attr)
                               }:_*
                     )
                   )
@@ -139,11 +139,11 @@ class CaveatExistsInExpression(
 
           // If 'predicate' is contaminated, it will contaminate the entire
           // expression.
-          apply(predicate),
+          apply(predicate, inputDescription),
 
           // Otherwise, propagate the annotation from whichever branch ends
           // up being taken
-          If(predicate, apply(thenClause), apply(elseClause))
+          If(predicate, apply(thenClause, inputDescription), apply(elseClause, inputDescription))
         ):_*)
 
       // Similarly, if all preceding predicates of a CaseWhen are guaranteed
@@ -168,25 +168,25 @@ class CaveatExistsInExpression(
             // Case 1 with a slight optimization: If we can guarantee no caveat,
             // then we can safely skip this case.
             val predicateCaveatBranch:Option[(Expression,Expression)] =
-              apply(predicate) match {
+              apply(predicate, inputDescription) match {
                 case Literal(false, BooleanType) => None
                 case predicateCaveat => Some( predicateCaveat -> Literal(true) )
               }
 
             // Case 2, merged with the result of Case 1
-            predicateCaveatBranch.toSeq :+ ( predicate -> apply(outcome) )
+            predicateCaveatBranch.toSeq :+ ( predicate -> apply(outcome, inputDescription) )
           },
 
           // Case 4 in the resulting otherwise clause
-          otherwise.map { apply(_) }
+          otherwise.map { apply(_,inputDescription) }
         )
 
       }
 
       // For AND, we can fall through if either side is safely false.
       case And(lhs, rhs) => {
-        val lhsCaveat = apply(lhs)
-        val rhsCaveat = apply(rhs)
+        val lhsCaveat = apply(lhs, inputDescription)
+        val rhsCaveat = apply(rhs, inputDescription)
         foldOr(
           // Propagate when caveats appear on both sides
           foldAnd(lhsCaveat, rhsCaveat),
@@ -199,8 +199,8 @@ class CaveatExistsInExpression(
 
       // For OR, we can fall through if either side is safely true.
       case Or(lhs, rhs) => {
-        val lhsCaveat = apply(lhs)
-        val rhsCaveat = apply(rhs)
+        val lhsCaveat = apply(lhs, inputDescription)
+        val rhsCaveat = apply(rhs, inputDescription)
         foldOr(
           // Propagate when caveats appear on both sides
           foldAnd(lhsCaveat, rhsCaveat),
@@ -257,7 +257,7 @@ class CaveatExistsInExpression(
           throw new IllegalArgumentException("Unexpected aggregate within an aggregate")
         }
         val argumentAnnotations = aggFn.children.map {
-                                    withoutExpectingAggregate(_)
+                                    withoutExpectingAggregate(_, inputDescription)
                                   }
         val isCaveated = foldOr(argumentAnnotations:_*)
         aggregateBoolOr(isCaveated)
@@ -268,32 +268,35 @@ class CaveatExistsInExpression(
           "Expecting all `AggregateFunction`s to be nested within an AggregateExpression")
 
       // if this is not a regular UDF, but our caveating UDF, then the result is caveated, otherwise it depends on the input
-      case ScalaUDF(function,
-        dataType,
-        children,
-        inputEncoders,
-        udfName,
-        nullable,
-        udfDeterministic)  =>
+      case ScalaUDF(
+            function,
+            dataType,
+            children,
+            inputEncoders,
+            outputEncoder,
+            udfName,
+            nullable,
+            udfDeterministic
+          )  =>
         {
           // if(udfName.getOrElse(false).equals(Caveat.udfName)) {
           //   Literal(true)
           // }
           // else {
-            foldOr(expr.children.map { apply(_) }:_*)
+            foldOr(expr.children.map { apply(_, inputDescription) }:_*)
           // }
         }
 
 
       //
       // We're not in one of our special cases.
-      case _ => foldOr(expr.children.map { apply(_) }:_*)
+      case _ => foldOr(expr.children.map { apply(_, inputDescription) }:_*)
     }
   }
 
-  def preserveName(expr: NamedExpression): NamedExpression =
+  def preserveName(expr: NamedExpression, inputDescription: IntermediateEncodingDescription): NamedExpression =
   {
-    Alias(apply(expr), expr.name)()
+    Alias(apply(expr, inputDescription), expr.name)()
   }
 
 }
@@ -302,6 +305,7 @@ object CaveatExistsInExpression
 {
   def apply(
     expr: Expression,
+    inputDescription: IntermediateEncodingDescription = null,
     pedantic: Boolean = true,
     expectAggregate: Boolean = false
   ): Expression =
@@ -309,12 +313,16 @@ object CaveatExistsInExpression
     new CaveatExistsInExpression(
       pedantic = pedantic,
       expectAggregate = expectAggregate
-    )(expr)
+    )(expr, inputDescription)
   }
 
-  def replaceHasCaveat(expr: Expression): Expression =
+  def replaceHasCaveat(
+    expr: Expression, 
+    inputDescription: IntermediateEncodingDescription
+  ): Expression =
     expr.transformDown { 
-      case HasCaveat(expr) => CaveatExistsInExpression(expr)
+      case HasCaveat(expr) => 
+        CaveatExistsInExpression(expr, inputDescription)
     }
 
 }

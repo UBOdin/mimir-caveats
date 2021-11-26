@@ -30,6 +30,20 @@ case class CaveatRange(
 ) extends Expression
     with UserDefinedExpression {
 
+  override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): Expression = 
+    CaveatRange(
+      value = newChildren(0),
+      lb = newChildren(1),
+      ub = newChildren(2),
+      message = newChildren(3),
+      family = family,
+      key = newChildren.drop(4).take(key.size),
+    )
+
+  override def name: String = 
+    "CaveatRange"
+
+
   def dataType = value.dataType
   protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
     value.genCode(ctx) // if no instrumentation this is just a value
@@ -99,7 +113,13 @@ object ApplyCaveatRange {
     }
 
   def registerUDF(s: SparkSession) = {
-    s.sessionState.functionRegistry.createOrReplaceTempFunction(udfName, udf _)
+    s.sessionState
+    .functionRegistry
+    .createOrReplaceTempFunction(
+      udfName, 
+      udf _,
+      "scala_udf"
+    )
   }
 
 }

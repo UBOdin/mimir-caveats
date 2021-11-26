@@ -242,7 +242,7 @@ class CaveatRangePlan()
             ),
             Literal(0))),
             name
-          )(),
+          )()
         }
 
         val rowBoundExprs: Seq[NamedExpression] = Seq(
@@ -278,11 +278,11 @@ class CaveatRangePlan()
         filter
       }
 
-      case Union(children: Seq[LogicalPlan]) =>
+      case Union(children: Seq[LogicalPlan], byName, allowMissingCol) =>
       {
         val rewrittenChildren = children.map(tapply)
         logrewr("UNION")
-        val res = Union(rewrittenChildren) //TODO should be fine?
+        val res = Union(rewrittenChildren, byName, allowMissingCol) //TODO should be fine?
         logop(res)
         res
       }
@@ -302,12 +302,7 @@ class CaveatRangePlan()
         ???
       }
 
-      case View(desc: CatalogTable, output: Seq[Attribute], child: LogicalPlan) =>
-      {
-        ???
-      }
-
-      case With(child: LogicalPlan, cteRelations: Seq[(String, SubqueryAlias)]) =>
+      case View(desc: CatalogTable, isTempView: Boolean, child: LogicalPlan) =>
       {
         ???
       }
@@ -592,14 +587,6 @@ class CaveatRangePlan()
         res
       }
 
-      case GroupingSets(
-          selectedGroupByExprs: Seq[Seq[Expression]],
-          groupByExprs: Seq[Expression],
-          child: LogicalPlan,
-          aggregations: Seq[NamedExpression]) =>
-      {
-        ???
-      }
       case Pivot(
           groupByExprsOpt: Option[Seq[NamedExpression]],
           pivotColumn: Expression,
@@ -650,7 +637,7 @@ class CaveatRangePlan()
       case RepartitionByExpression(
           partitionExpressions: Seq[Expression],
           child: LogicalPlan,
-          numPartitions: Int) =>
+          numPartitions: Option[Int]) =>
       {
         ???
       }

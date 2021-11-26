@@ -11,3 +11,4 @@
 .cache-tests
 /.bloop
 /.metals
+.bsp

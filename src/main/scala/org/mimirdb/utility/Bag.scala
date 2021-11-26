@@ -2,8 +2,9 @@ package org.mimirdb.utility
 
 import org.apache.spark.sql. { DataFrame, Row }
 import org.mimirdb.spark.sparkWorkarounds._
+import scala.reflect.ClassTag
 
-case class Bag[T](data: Map[T,Int]) {
+case class Bag[T](data: Map[T,Int])(implicit val tag: ClassTag[T]) {
 
   def union(other: Bag[T]): Bag[T] = {
     var newdata: Map[T,Int] = this.data
@@ -18,7 +19,7 @@ case class Bag[T](data: Map[T,Int]) {
 
   override def equals(other: Any): Boolean = {
     other match {
-      case x: Bag[T] => Bag.bagEquals(this,x)
+      case x: Bag[_] => x.tag == tag && Bag.bagEquals(this,x.asInstanceOf[Bag[T]])
       case _ =>  false
     }
   }
@@ -27,7 +28,7 @@ case class Bag[T](data: Map[T,Int]) {
 
 object Bag {
 
-  def apply[T](in: Seq[T]): Bag[T] = {
+  def apply[T](in: Seq[T])(implicit tag: ClassTag[T]): Bag[T] = {
     val data = in.groupBy{ x => x }.map { case (k, v) => k -> v.map( x => 1).reduce( (x,y) => x + y ) }
     Bag[T](data)
   }

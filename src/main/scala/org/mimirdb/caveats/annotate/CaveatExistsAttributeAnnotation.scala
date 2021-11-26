@@ -12,36 +12,76 @@ import org.apache.spark.sql.catalyst.expressions.{
 }
 import org.apache.spark.sql.types.BooleanType
 
-object CaveatExistsAttributeAnnotation
-  extends IntermediateEncoding
+class CaveatExistsAttributeAnnotation(
+  val annotationForRow: AttributeReference,
+  val annotationsForAttributes: Map[ExprId, AttributeReference],
+  val allAttributes: Seq[Attribute]
+)
+  extends IntermediateEncodingDescription
 {
-  val annotationForRow = AttributeReference("__MIMIR_ROW_TAINT", BooleanType)(NamedExpression.newExprId)
-  val attributeAnnotations = scala.collection.mutable.Map[ExprId, Attribute]()
+  def annotationFor(attr: Attribute): Expression = 
+    annotationsForAttributes
+      .get(attr.exprId)
+      .getOrElse { 
+        throw new NoSuchElementException(
+          s"Missing annotation for $attr (out of ${allAttributes.mkString(", ") })"
+        )
+      }
 
-  def annotationName(attr: Attribute): String =
-    s"__MIMIR_ATTRIBUTE_${attr.exprId.id}_${attr.name}"
-
-  def annotationFor(attr: Attribute) = 
-  {
-    if(!attributeAnnotations.contains(attr.exprId)){
-      attributeAnnotations.put(
-        attr.exprId, 
-        AttributeReference(annotationName(attr), BooleanType)
-                          (NamedExpression.newExprId)
-      )
+  def allAnnotations =
+    allAttributes.map { attr => 
+      attr -> annotationFor(attr)
     }
-    attributeAnnotations(attr.exprId)
-  }
 
-  def aliasTo(a:Attribute, e:Expression) = 
-    Alias(e, a.name)(a.exprId)
-    
-  def getAnnotationExpressions(
-    oldPlan: LogicalPlan,
-    newPlan: LogicalPlan,
+  override def toString(): String = 
+  {
+    "{ " + 
+      allAttributes.map { a => a -> annotationsForAttributes(a.exprId) }
+                   .toMap
+                   .mkString(", ") + 
+    " } /// " + annotationForRow
+  }
+}
+
+object CaveatExistsAttributeAnnotation
+  extends IntermediateEncoding[CaveatExistsAttributeAnnotation]
+{
+  type description = CaveatExistsAttributeAnnotation
+
+  val ROW_ANNOTATION = "__MIMIR_ROW_CAVEATTED"
+  def ATTR_ANNOTATION(attr: Attribute) = 
+    s"__MIMIR_ATTR_CAVEATTED__${attr.name}_${attr.exprId.id}"
+
+  def build(
     attributes: Seq[(Attribute, Expression)],
     row: Expression
-  ): Seq[NamedExpression] =
-    attributes.map { case (a, e) => aliasTo(annotationFor(a), e) } :+ aliasTo(annotationForRow, row)
-  
+  ): (Seq[NamedExpression], CaveatExistsAttributeAnnotation) =
+  {
+    val rowExpression = Alias(row, ROW_ANNOTATION)()
+    val attrExpressions = attributes.map { case (attr, expr) =>
+                            attr -> Alias(expr, ATTR_ANNOTATION(attr))()
+                          }.toIndexedSeq
+
+    (
+      attrExpressions.map { _._2 } :+ rowExpression,
+      new CaveatExistsAttributeAnnotation(
+        annotationForRow = 
+          AttributeReference(
+            rowExpression.name, 
+            BooleanType,
+            false,
+          )(exprId = rowExpression.exprId),
+        annotationsForAttributes = 
+          attrExpressions.map { case (attr, attrExpression) => 
+            attr.exprId -> 
+              AttributeReference(
+                attrExpression.name, 
+                BooleanType,
+                false,
+              )(exprId = attrExpression.exprId)
+          }.toMap,
+          attrExpressions.map { _._1 }
+      )
+    )
+  }
 }

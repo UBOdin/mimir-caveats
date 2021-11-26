@@ -17,6 +17,10 @@ case class Possible(
 ) extends Expression
   with Unevaluable
 {
+
+  override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): Expression = 
+    Possible(newChildren(0), context)
+
   def dataType = target.dataType
   def nullable = target.nullable
   def children = Seq(target)

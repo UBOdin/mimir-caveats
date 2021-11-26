@@ -1,7 +1,7 @@
 name := "mimir-caveats"
-version := "0.3.4"
+version := "0.3.5"
 organization := "org.mimirdb"
-scalaVersion := "2.12.10"
+scalaVersion := "2.13.7"
 
 // Make the UX work in SBT
 fork := true
@@ -19,7 +19,7 @@ Test / publishArtifact := true
 scalacOptions in Test ++= Seq("-Yrangepos")
 
 // Support Test Resolvers
-resolvers += "MimirDB" at "https://maven.mimirdb.info/"
+resolvers += "MimirDB" at "https://maven.mimirdb.org/"
 resolvers += Resolver.typesafeRepo("releases")
 resolvers += DefaultMavenRepository
 resolvers ++= Seq("snapshots", "releases").map(Resolver.sonatypeRepo)
@@ -37,16 +37,16 @@ libraryDependencies ++= Seq(
   "org.specs2"                    %%  "specs2-junit"             % "4.8.2" % "test",
 
   // Spark
-  "org.apache.spark"              %%  "spark-sql"                % "3.0.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
-  "org.apache.spark"              %%  "spark-mllib"              % "3.0.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
-  "org.apache.spark"              %%  "spark-hive"               % "3.0.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop"), ExclusionRule("com.fasterxml.jackson.core")),
-  "org.apache.hadoop"             %   "hadoop-client"            % "2.8.2" excludeAll(
+  "org.apache.spark"              %%  "spark-sql"                % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-mllib"              % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-hive"               % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.hadoop"             %   "hadoop-client"            % "3.3.1" excludeAll(
                                                                               ExclusionRule(organization ="org.slf4j", name = "slf4j-log4j12"), 
                                                                               ExclusionRule("com.fasterxml.jackson.core"), 
                                                                             ),
 
   // Play JSON
-  "com.typesafe.play"             %%  "play-json"                % "2.8.1"
+  "com.typesafe.play"             %%  "play-json"                % "2.9.2"
 )
 
 ////// Publishing Metadata //////

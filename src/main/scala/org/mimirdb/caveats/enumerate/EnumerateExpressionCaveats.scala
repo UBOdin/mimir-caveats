@@ -6,6 +6,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 
 import org.mimirdb.caveats._
 import com.typesafe.scalalogging.LazyLogging
+import org.mimirdb.spark.expressionLogic.foldAnd
 
 object EnumerateExpressionCaveats
   extends LazyLogging
@@ -20,11 +21,12 @@ object EnumerateExpressionCaveats
     val caveatSets = 
       ExpressionDependency(expression, vSlice, aggregates){ localVSlice => {
         case applyCaveat: ApplyCaveat => 
-          applyCaveat.onPlan(Filter(localVSlice, plan))
+          applyCaveat.onPlan(plan, foldAnd(localVSlice, applyCaveat.condition))
       }}
 
     logger.trace(s"Explain Expression: $expression -> ${caveatSets.map{ _.toString }.mkString("; ")}")
 
     return caveatSets
   }
+
 }

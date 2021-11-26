@@ -10,6 +10,7 @@ import org.mimirdb.caveats.annotate.AnnotationException
 import org.mimirdb.caveats.lifting.Possible
 import org.apache.spark.sql.catalyst.expressions.IsNull
 import org.mimirdb.caveats.annotate.CaveatExistsInExpression
+import scala.collection.mutable
 
 case class Caveat(
   message: String,
@@ -24,7 +25,7 @@ object Caveat
     Caveat(
       message = config.getAs[String](Constants.MESSAGE_ATTRIBUTE),
       family  = family,
-      key     = config.getAs[Seq[Any]](Constants.KEY_ATTRIBUTE).map { Literal(_) }
+      key     = config.getAs[mutable.Seq[Any]](Constants.KEY_ATTRIBUTE).toSeq.map { Literal(_) }
     )
   }
 
@@ -169,6 +170,14 @@ object Caveat
     * @param s the SparkSession for which we want to register the UDF.
     */
   def registerUDF(s: SparkSession) = {
-    udfs.map{ case (name,udf) =>  s.sessionState.functionRegistry.createOrReplaceTempFunction(name, udf) }
+    udfs.map { case (name,udf) =>  
+      s.sessionState
+       .functionRegistry
+       .createOrReplaceTempFunction(
+          name, 
+          udf,
+          "scala_udf"
+        ) 
+    }
   }
 }

@@ -35,7 +35,8 @@ class CaveatExistsInPlan(
 {
 
   def outputEncoding = CaveatExistsBooleanStructEncoding
-  def internalEncoding: IntermediateEncoding = CaveatExistsAttributeAnnotation
+  type InternalDescription = CaveatExistsAttributeAnnotation.description
+  def internalEncoding: IntermediateEncoding[InternalDescription] = CaveatExistsAttributeAnnotation
 
   def annotationType = CaveatExistsType
 
@@ -54,38 +55,58 @@ class CaveatExistsInPlan(
    */
   def apply(plan: LogicalPlan, trace: Boolean = false): LogicalPlan =
   {
+    val (annotatedPlan, description) = annotate(plan)
+
     Project(
      plan.output
         .filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
       :+Alias(
         CreateNamedStruct(Seq(
-          Literal(ROW_FIELD), internalEncoding.annotationForRow,
+          Literal(ROW_FIELD), description.annotationForRow,
           Literal(ATTRIBUTE_FIELD), CreateNamedStruct(
             plan.output
                 .filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
                 .flatMap { attribute =>
                   Seq(
                     Literal(attribute.name),
-                    internalEncoding.annotationFor(attribute)
+                    description.annotationFor(attribute)
                   )
                 }
           )
         )),
         ANNOTATION_ATTRIBUTE
       )(),
-      annotate(plan)
+      annotatedPlan
     )
   }
 
-  def annotate(plan: LogicalPlan): LogicalPlan =
+  def annotate(plan: LogicalPlan): (LogicalPlan, InternalDescription) =
   {
-    def PASS_THROUGH_CAVEATS =
-      plan.mapChildren { annotate(_) }
+    def PASS_THROUGH_CAVEATS: (LogicalPlan, InternalDescription) =
+    {
+      val (newChildren, descriptions) = 
+        plan.children.map { annotate(_) }.unzip
 
-    def PLAN_IS_FREE_OF_CAVEATS =
+      if(newChildren.size == 1){
+        (plan.withNewChildren(newChildren), descriptions.head)
+      } else {
+        val (mergedExpressions, mergedDescription) = 
+          internalEncoding.merge(descriptions)
+        (
+          Project(
+            plan.output ++ mergedExpressions,
+            plan.withNewChildren(newChildren)
+          ),
+          mergedDescription
+        )
+      }
+    }
+
+    def PLAN_IS_FREE_OF_CAVEATS: (LogicalPlan, InternalDescription) =
       internalEncoding.annotate(
         oldPlan = plan,
         newPlan = plan,
+        newPlanDescription = null,
         default = Literal(false)
       )
     // assert(plan.analyzed, s"annotating non-analyzed plan: $plan")
@@ -95,7 +116,7 @@ class CaveatExistsInPlan(
     // to fail-stop operation to make sure that new operators or non-standard
     // behaviors get surfaced early.
 
-    val ret: LogicalPlan = plan match {
+    val (ret, retDescription): (LogicalPlan, InternalDescription) = plan match {
 
       /*********************************************************/
       case _ if Caveats.planIsAnnotated(plan) =>
@@ -131,17 +152,21 @@ class CaveatExistsInPlan(
           in the input.
         */
 
-        val rewrittenChild = annotate(child)
-        val annotation = internalEncoding.annotations(
-                            oldPlan = plan,
-                            newChild = rewrittenChild,
-                            attributes = projectList.map { e => e.toAttribute -> annotateExpression(e) }
-                         )
-        Project(
-          projectList = projectList.map(
-            CaveatExistsInExpression.replaceHasCaveat(_)).asInstanceOf[Seq[NamedExpression]]
-            ++ annotation,
-          child = rewrittenChild
+        val (rewrittenChild, childDescription) = annotate(child)
+        val (annotation, description) = 
+          internalEncoding.annotations(
+            oldPlan = plan,
+            newPlanDescription = childDescription,
+            attributes = projectList.map { e => e.toAttribute -> annotateExpression(e, childDescription) }
+          )
+        (
+          Project(
+            projectList = projectList.map(
+              CaveatExistsInExpression.replaceHasCaveat(_, childDescription)).asInstanceOf[Seq[NamedExpression]]
+              ++ annotation,
+            child = rewrittenChild
+          ),
+          description
         )
       }
 
@@ -168,8 +193,8 @@ class CaveatExistsInPlan(
           a generator is/should be a strict superset of [child].
         */
         //TODO deal with HasCaveat in here necessary?
-        val generatorAnnotation = annotateExpression(generator)
-        val rewrittenChild = annotate(child)
+        val (rewrittenChild, childDescription) = annotate(child)
+        val generatorAnnotation = annotateExpression(generator, childDescription)
         val rewrittenPlan =
           Generate(
             generator = generator,
@@ -183,6 +208,7 @@ class CaveatExistsInPlan(
         internalEncoding.annotate(
           oldPlan = plan,
           newPlan = rewrittenPlan,
+          newPlanDescription = childDescription,
 
           // Only modify the generated attributes
           replace = generatorOutput.map { _ -> generatorAnnotation },
@@ -201,13 +227,14 @@ class CaveatExistsInPlan(
           with HasCaveat(expr), we have to replace this with the result of
           CaveatExistsInExpression(expr).
         */
-        val conditionAnnotation = annotateExpression(condition)
+        val (rewrittenChild, childDescription) = annotate(child)
+        val conditionAnnotation = annotateExpression(condition, childDescription)
         val conditionReplacedHasCaveat = 
-          CaveatExistsInExpression.replaceHasCaveat(condition)
-        val rewrittenChild = annotate(child)
+          CaveatExistsInExpression.replaceHasCaveat(condition, childDescription)
         internalEncoding.annotate(
           oldPlan = plan,
           newPlan = Filter(conditionReplacedHasCaveat, rewrittenChild),
+          newPlanDescription = childDescription,
           addToRow = Seq(conditionAnnotation)
         )
       }
@@ -235,7 +262,7 @@ class CaveatExistsInPlan(
       }
 
       /*********************************************************/
-      case Union(children: Seq[LogicalPlan]) =>
+      case Union(children: Seq[LogicalPlan], byName, allowMissingCol) =>
       {
         PASS_THROUGH_CAVEATS
       }
@@ -254,19 +281,24 @@ class CaveatExistsInPlan(
           names, and then add another projection after the fact to merge the
           annotations back together
         */
+        val (annotatedLeft, leftDescription) = annotate(left)
+        val (annotatedRight, rightDescription) = annotate(right)
 
-        internalEncoding.join(
-          oldPlan = plan,
-          lhs = annotate(left),
-          rhs = annotate(right),
-          build = Join(
-            _:LogicalPlan,
-            _:LogicalPlan,
-            joinType,
-            condition,
-            hint
+        val (mergedExpressions, mergedDescription) = 
+          internalEncoding.merge(Seq(leftDescription, rightDescription))
+
+        (
+          Project(
+            plan.output ++ mergedExpressions,
+            Join(
+              annotatedLeft,
+              annotatedRight,
+              joinType,
+              condition,
+              hint
+            )
           ),
-          addToRow = condition.map { annotateExpression(_) }.toSeq
+          mergedDescription
         )
       }
 
@@ -287,7 +319,11 @@ class CaveatExistsInPlan(
       }
 
       /*********************************************************/
-      case View(desc: CatalogTable, output: Seq[Attribute], child: LogicalPlan) =>
+      case View(
+            desc: CatalogTable, 
+            isTempView: Boolean, 
+            child: LogicalPlan
+          ) =>
       {
         /*
           Views are a bit weird.  We need to change the schema, which breaks the
@@ -296,20 +332,6 @@ class CaveatExistsInPlan(
           If we've gotten here, we have to drop the link to the view.
         */
         annotate(child)
-      }
-
-      /*********************************************************/
-      case With(child: LogicalPlan, cteRelations: Seq[(String, SubqueryAlias)]) =>
-      {
-        /*
-          Common Table Expressions.  Basically, you evaluate each of the
-          [cteRelations] in order, and expose the result to subsequent ctes and
-          the child, which produces the final result.
-
-          This is going to require a little care, since we need to invalidate
-          any schemas cached in operators.
-        */
-        ???
       }
 
       /*********************************************************/
@@ -370,17 +392,17 @@ class CaveatExistsInPlan(
           pre- and post-aggregate.
          */
 
-        val annotatedChild = annotate(child)
+        val (annotatedChild, childDescription) = annotate(child)
         val groupingAttributes =
           groupingExpressions.flatMap { attributesOfExpression(_) }.toSet
 
         val groupMembershipDependsOnACaveat =
-          foldOr(groupingExpressions.map { annotateExpression(_) }:_*)
+          foldOr(groupingExpressions.map { annotateExpression(_, childDescription) }:_*)
 
         val groupIsGuaranteedToHaveRows =
           aggregateBoolOr(
             foldAnd(
-              negate(internalEncoding.annotationForRow),
+              negate(childDescription.annotationForRow),
               negate(groupMembershipDependsOnACaveat)
             )
           )
@@ -398,22 +420,22 @@ class CaveatExistsInPlan(
             // TODO: move grouping caveats out to table-level?
             getResolvedAttribute(aggr) ->
               foldOr(
-                annotateAggregate(aggr),
+                annotateAggregate(aggr, childDescription),
                 aggregateBoolOr(
                   if(isAggregate(aggr)){
                     foldOr(
                       groupMembershipDependsOnACaveat,
-                      internalEncoding.annotationForRow
+                      childDescription.annotationForRow
                     )
                   } else { groupMembershipDependsOnACaveat }
                 )
               )
           }
 
-        val annotation =
+        val (annotation, description) =
           internalEncoding.annotations(
             oldPlan = plan,
-            newChild = child,
+            newPlanDescription = childDescription,
             replace = attrAnnotations,
             attributes = attrAnnotations,
             row = rowAnnotation
@@ -436,7 +458,7 @@ class CaveatExistsInPlan(
           val attrAnnotations = 
             aggregateExpressions
               .map { getResolvedAttribute(_) }
-              .map { attr => attr -> foldOr(internalEncoding.annotationFor(attr),
+              .map { attr => attr -> foldOr(description.annotationFor(attr),
                                             groupContaminant) }
 
           internalEncoding.annotate(
@@ -456,11 +478,12 @@ class CaveatExistsInPlan(
                 None,
                 JoinHint.NONE
               ),
+            newPlanDescription = description,
             replace = attrAnnotations,
             attributes = attrAnnotations
               
           )
-        } else { ret }
+        } else { (ret, description) }
       }
 
       /*********************************************************/
@@ -475,16 +498,6 @@ class CaveatExistsInPlan(
 
       /*********************************************************/
       case Expand(projections: Seq[Seq[Expression]], output: Seq[Attribute], child: LogicalPlan) =>
-      {
-        ???
-      }
-
-      /*********************************************************/
-      case GroupingSets(
-          selectedGroupByExprs: Seq[Seq[Expression]],
-          groupByExprs: Seq[Expression],
-          child: LogicalPlan,
-          aggregations: Seq[NamedExpression]) =>
       {
         ???
       }
@@ -505,9 +518,12 @@ class CaveatExistsInPlan(
       {
         val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
 
+        val (annotatedChild, childDescription) = annotate(child)
+
         internalEncoding.annotate(
           oldPlan = plan,
-          newPlan = GlobalLimit(limitExpr, annotate(child)),
+          newPlan = GlobalLimit(limitExpr, annotatedChild),
+          newPlanDescription = childDescription,
           addToRow = possibleSortCaveats.map { _.isNonemptyExpression }
         )
       }
@@ -516,9 +532,13 @@ class CaveatExistsInPlan(
       case LocalLimit(limitExpr: Expression, child: LogicalPlan) =>
       {
         val possibleSortCaveats = EnumeratePlanCaveats(child)(sort = true)
+        
+        val (annotatedChild, childDescription) = annotate(child)
+        
         internalEncoding.annotate(
           oldPlan = plan,
-          newPlan = LocalLimit(limitExpr, annotate(child)),
+          newPlan = LocalLimit(limitExpr, annotatedChild),
+          newPlanDescription = childDescription,
           addToRow = possibleSortCaveats.map { _.isNonemptyExpression }
         )
       }
@@ -563,7 +583,8 @@ class CaveatExistsInPlan(
       case RepartitionByExpression(
           partitionExpressions: Seq[Expression],
           child: LogicalPlan,
-          numPartitions: Int) =>
+          numPartitions: Option[Int]
+        ) =>
       {
         ???
       }
@@ -591,11 +612,16 @@ class CaveatExistsInPlan(
       logger.trace(s"ANNOTATE\n$plan  ---vvvvvvv---\n$ret\n\n")
     }
 
-    return ret
+    return (ret, retDescription)
   }
 
-  def recoverExistingAnnotations(plan: LogicalPlan): LogicalPlan =
+  def recoverExistingAnnotations(plan: LogicalPlan): (LogicalPlan, InternalDescription) =
   {
+    if(trace){
+      println(s"Recover Existing Annotations: \n$plan")      
+    } else {
+      logger.trace(s"Recover Existing Annotations: \n$plan")      
+    }
     plan match {
       // We need to special-case filter, since it passes through its source schema.  Consider the
       // following example:
@@ -610,8 +636,8 @@ class CaveatExistsInPlan(
       // Note that this is safe, because an annotated filter always has a projection over it.
       case Filter(condition, child) =>
         {
-          val conditionAnnotation = annotateExpression(condition)
-          val rewrittenChild = recoverExistingAnnotations(child)
+          val (rewrittenChild, description) = recoverExistingAnnotations(child)
+          val conditionAnnotation = annotateExpression(condition, description)
           val planWithoutAnnotation = Project(
               plan.output.filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) },
               plan
@@ -619,6 +645,7 @@ class CaveatExistsInPlan(
           internalEncoding.annotate(
             oldPlan = planWithoutAnnotation,
             newPlan = Filter(condition, rewrittenChild),
+            newPlanDescription = description,
             addToRow = Seq(conditionAnnotation)
           )
         }
@@ -629,17 +656,21 @@ class CaveatExistsInPlan(
       case project:Project => {
         // if this is not the wrapping projection, then give up and manually unpack the fields
         val fields = plan.output.filterNot { _.name.equals(ANNOTATION_ATTRIBUTE) }
-        val annotations =
+        val (annotations, description) =
           internalEncoding.annotations(
             oldPlan = Project(fields, plan),
-            newChild = plan,
+            newPlanDescription = null, // we're overriding the attributes and row, description shouldn't be needed
             attributes =
               fields.map { field =>
-                field -> outputEncoding.attributeAnnotationExpressions(field.name)(0)
+                field -> 
+                  outputEncoding.attributeAnnotationExpressions(field.name)(0)
               },
             row = outputEncoding.rowAnnotationExpression()
           )
-        Project(fields ++ annotations, project)
+        (
+          Project(fields ++ annotations, project),
+          description
+        )
       }
 
       // It's also possible that we have something other than a projection,

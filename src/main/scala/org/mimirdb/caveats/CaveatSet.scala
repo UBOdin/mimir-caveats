@@ -8,6 +8,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.mimirdb.spark.sparkWorkarounds._
 import org.mimirdb.spark.expressionLogic.negate
+import com.typesafe.scalalogging.LazyLogging
 
 
 abstract class CaveatSet
@@ -39,6 +40,7 @@ class EnumerableCaveatSet(
   val plan: LogicalPlan, 
   val family: Option[String]
 ) extends CaveatSet
+  with LazyLogging
 {
 
   def withContext[T](ctx: SparkSession)(op: DataFrame => T): T =
@@ -49,7 +51,13 @@ class EnumerableCaveatSet(
   def take(ctx: SparkSession, n:Int) = 
     withContext(ctx) { _.take(n).map { Caveat(family, _) } }
   def all(ctx: SparkSession) = 
-    withContext(ctx) { _.collect.map { Caveat(family, _) } }
+  {
+    logger.trace(s"BEFORE OPTIMIZATION: \n$plan")
+    withContext(ctx) { df =>
+      logger.trace(s"AFTER OPTIMIZATION: \n${df.queryExecution.optimizedPlan}")
+      df.collect.map { Caveat(family, _) } 
+    }
+  }
   def isEmpty(ctx: SparkSession) = 
     withContext(ctx) { _.isEmpty }
 

@@ -69,9 +69,12 @@ class EnumerateSpec
       ).join(testDF, col("B") === col("C"), "inner")
        .select(col("B"), col("C"), col("A") + col("D") as "E")
 
+
+
     df.listCaveats(
+        row = false,
         constraint = df("E") === 3
-      ).map { _.message } must contain(exactly("Hello 3", "Hello 3"))
+      ).map { _.message } must contain(exactly("Hello 3", "Hello 3", "Hello 4"))
   }
 
 

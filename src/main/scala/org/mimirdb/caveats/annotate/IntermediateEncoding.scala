@@ -13,17 +13,42 @@ import org.apache.spark.sql.catalyst.expressions.{
 }
 import org.mimirdb.spark.expressionLogic.foldOr
 
-trait IntermediateEncoding
-{
-  def annotationForRow: NamedExpression
-  def annotationFor(attr: Attribute): NamedExpression
 
-  def getAnnotationExpressions(
-    oldPlan: LogicalPlan,
-    newChild: LogicalPlan,
+trait IntermediateEncodingDescription
+{
+  def annotationForRow: Expression
+  def annotationFor(attr: Attribute): Expression
+  def allAnnotations: Seq[(Attribute, Expression)]
+}
+
+trait IntermediateEncoding[D <: IntermediateEncodingDescription]
+{
+
+  /**
+   * Assemble an instance of the specified intermediate encoding, 
+   * allocating fresh names for annotated attributes
+   */
+  def build(
     attributes: Seq[(Attribute, Expression)],
     row: Expression
-  ): Seq[NamedExpression]
+  ): (Seq[NamedExpression], D)
+
+
+  def merge(elements: Seq[D]): (Seq[NamedExpression], D) =
+    build(
+      elements.flatMap { _.allAnnotations },
+      foldOr( elements.map { _.annotationForRow }:_* )
+    )
+
+  // def annotationForRow: NamedExpression
+  // def annotationFor(attr: Attribute): NamedExpression
+
+  // def getAnnotationExpressions(
+  //   oldPlan: LogicalPlan,
+  //   newChild: LogicalPlan,
+  //   attributes: Seq[(Attribute, Expression)],
+  //   row: Expression
+  // ): Seq[NamedExpression]
 
   /**
    * Utility method to assemble a list of NamedAttributes for the specified encoding.  
@@ -46,33 +71,32 @@ trait IntermediateEncoding
    */
   def annotations(
     oldPlan: LogicalPlan,
-    newChild: LogicalPlan,
+    newPlanDescription: D,
     attributes: Seq[(Attribute, Expression)] = null,
     default: Expression = null,
     replace: Seq[(Attribute, Expression)] = Seq(),
     row: Expression = null,
     addToRow: Seq[Expression] = Seq()
-  ): Seq[NamedExpression] = 
+  ): (Seq[NamedExpression], D) = 
   {
     val getDefault = Option(default).map { e => {(x:Attribute) => e} }
-                                    .getOrElse { annotationFor(_) }
-    getAnnotationExpressions(
-      oldPlan, 
-      newChild, 
+                                    .getOrElse { newPlanDescription.annotationFor(_) }
+    build(
       (
         if(attributes == null){
           val byExprId = replace.map { case (a, v) => a.exprId -> v }
                                 .toMap
-          oldPlan.output.map { attr => 
-            attr -> byExprId.getOrElse(attr.exprId, getDefault(attr))
-          }
+          oldPlan.output
+                 .map { case attr => 
+                   attr -> byExprId.getOrElse(attr.exprId, getDefault(attr))
+                 }
         } else { attributes } 
       ),
       foldOr((
         (
           if(row != null){ row }
           else if(default != null) { default }
-          else { annotationForRow }
+          else { newPlanDescription.annotationForRow }
         ) +: addToRow
       ):_*)
     )
@@ -84,39 +108,30 @@ trait IntermediateEncoding
   def annotate(
     oldPlan: LogicalPlan,
     newPlan: LogicalPlan,
+    newPlanDescription: D,
     attributes: Seq[(Attribute, Expression)] = null,
     default: Expression = null,
     replace: Seq[(Attribute, Expression)] = Seq(),
     row: Expression = null,
     addToRow: Seq[Expression] = Seq()
-  ): LogicalPlan = 
-    Project(
-      oldPlan.output ++ annotations(oldPlan, newPlan, attributes, default, replace, row, addToRow),
-      newPlan
-    )
-
-  def join(
-    oldPlan: LogicalPlan,
-    lhs: LogicalPlan,
-    rhs: LogicalPlan,
-    build: (LogicalPlan, LogicalPlan) => LogicalPlan,
-    addToRow: Seq[Expression] = Seq()
-  ): LogicalPlan = 
+  ): (LogicalPlan, D) = 
   {
-    // print(s"--- old ----\n$oldPlan\n--- lhs ----\n$lhs\n--- rhs ----\n$rhs\n----------\n")
-    val rhsRowAttr = AttributeReference("__MIMIR_JOIN_RHS_TEMP", annotationForRow.dataType)()
-    val rhsNonRowAttrs = 
-      rhs.output.filterNot { _.name.equals(annotationForRow.name) } 
-    val safeRhs = 
+    val (annotationExpressions, description): (Seq[NamedExpression], D) =
+        annotations(
+          oldPlan = oldPlan, 
+          newPlanDescription = newPlanDescription,
+          attributes = attributes, 
+          default = default, 
+          replace = replace, 
+          row = row, 
+          addToRow = addToRow
+        )
+    (
       Project(
-        rhsNonRowAttrs :+ Alias(annotationForRow, rhsRowAttr.name)(rhsRowAttr.exprId),
-        rhs
-      )
-
-    annotate(
-      oldPlan, 
-      build(lhs, safeRhs),
-      addToRow = rhsRowAttr +: addToRow
+        oldPlan.output ++ annotationExpressions,
+        newPlan
+      ),
+      description
     )
   }
 }

@@ -9,6 +9,10 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.mimirdb.caveats.Constants._
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.BooleanType
+import org.mimirdb.spark.expressionLogic._
+import org.apache.spark.sql.catalyst.plans.logical.Join
+import org.apache.spark.sql.catalyst.plans.{ Cross => CrossJoin }
+import org.apache.spark.sql.catalyst.plans.logical.JoinHint
 
 case class ApplyCaveat(
   value: Expression,
@@ -20,6 +24,22 @@ case class ApplyCaveat(
 ) extends Expression
   with UserDefinedExpression
 {
+
+  override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): Expression = 
+  {
+    ApplyCaveat(
+      newChildren(0),
+      newChildren(1),
+      family,
+      newChildren.slice(2, 2+key.size),
+      global,
+      newChildren(2+key.size)
+    )
+  }
+
+  override def name: String = 
+    "ApplyCaveat"
+
   def dataType = value.dataType
   protected def doGenCode(ctx: CodegenContext,ev: ExprCode): ExprCode =
     value.genCode(ctx)
@@ -27,7 +47,7 @@ case class ApplyCaveat(
   def nullable = value.nullable
   def children = Seq(value, message) ++ key :+ condition
 
-  def onPlan(plan: LogicalPlan): CaveatSet =
+  def onPlan(plan: LogicalPlan, slice: Expression = Literal(true)): CaveatSet =
   {
     if(global){
       val emptyRow = InternalRow()
@@ -37,6 +57,29 @@ case class ApplyCaveat(
         key = key.map { _.eval(emptyRow) }.map { Literal(_) }
       ))
     } else {
+      var (jointPlan, jointSlice) =
+        splitAnd(slice)
+          .foldLeft(plan, Literal(true):Expression) {  
+            // case ((jointPlan, jointSlice), Exists(Filter(condition, subplan), _, _, _)) => 
+            //   (
+            //     Join(
+            //       jointPlan,
+            //       subplan,
+            //       CrossJoin,
+            //       None,
+            //       JoinHint.NONE
+            //     ),
+            //     foldAnd(
+            //       jointSlice, 
+            //       condition.transform { case OuterReference(e) => e }
+            //     )
+            //   )
+            case ((jointPlan, jointSlice), newSlice) => 
+              (
+                jointPlan,
+                foldAnd(jointSlice, newSlice)
+              )
+          }
       new EnumerableCaveatSet(
         Project(
           Seq(
@@ -44,8 +87,8 @@ case class ApplyCaveat(
             Alias(CreateArray(key), KEY_ATTRIBUTE)()
           ),
           Filter(
-            condition,
-            plan
+            jointSlice,
+            jointPlan
           )
         ),
         family
@@ -85,6 +128,14 @@ case class HasCaveat(
     with UserDefinedExpression
 {
 
+  override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): Expression =
+    HasCaveat(
+      newChildren(0)
+    )
+
+  override def name: String =
+    "HasCaveat"
+  
   override def children: Seq[Expression] = Seq(value)
 
   override def nullable: Boolean = value.nullable

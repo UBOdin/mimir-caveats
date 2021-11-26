@@ -129,5 +129,6 @@ object ExpressionDependency
       case a:Attribute => a.exprId -> vSlice
     }}.groupBy { _._1 }
       .mapValues { elems => foldOr(elems.map { _._2 }:_*) }
+      .toMap
   
 }

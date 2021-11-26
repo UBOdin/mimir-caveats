@@ -10,6 +10,7 @@ import org.mimirdb.caveats.annotate.{
   CaveatExistsInExpression
 }
 import org.mimirdb.spark.sparkWorkarounds._
+import org.mimirdb.caveats.annotate.IntermediateEncodingDescription
 
 
 object ResolveLifts
@@ -45,10 +46,11 @@ object ResolveLifts
     plan.transformUp {
       case original@Filter(condition, child) => {
         if(needsRewrite(condition)){
+          val (rewrittenChild, childDescription) = caveats.annotate(child)
           Project(child.output, 
             Filter(
-              rewrite(condition, caveats),
-              caveats.annotate(child)
+              rewrite(condition, caveats, childDescription),
+              rewrittenChild
             )
           )
         } else { original }
@@ -62,7 +64,8 @@ object ResolveLifts
 
   def rewrite(
     expression: Expression,
-    caveats: CaveatExistsInPlan
+    caveats: CaveatExistsInPlan,
+    inputDescription: IntermediateEncodingDescription
   ): Expression = 
     expression.transformUp {
       case Possible(child, context) if child.dataType.equals(BooleanType) => {
@@ -75,7 +78,8 @@ object ResolveLifts
               }),
               // condition = HasCaveat(child)
             )
-          )
+          ),
+          inputDescription
         )
       }
       case Possible(_, _) => {

@@ -73,7 +73,6 @@ object InferTypes
     val detectedTypes = 
       Option(attributes)
         .getOrElse { stringColumns(df) }
-        .par
         .map { col:String => 
           col -> inferColumn(df, col)
                     .filter { _._2 > cutoff }
@@ -81,7 +80,6 @@ object InferTypes
                     .map { _._1 }
                     .getOrElse { StringType }
         }
-        .seq
         .toMap
 
     logger.debug(s"Detected: $detectedTypes")

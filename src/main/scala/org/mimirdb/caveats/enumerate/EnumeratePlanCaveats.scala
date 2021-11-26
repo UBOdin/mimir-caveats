@@ -10,7 +10,8 @@ import org.mimirdb.spark.expressionLogic.{
   simplify, 
   attributesOfExpression,
   splitAnd,
-  isAggregate
+  isAggregate,
+  buildExists
 }
 import com.typesafe.scalalogging.LazyLogging
 import scala.{ Left, Right }
@@ -20,6 +21,7 @@ import org.apache.spark.sql.catalyst.plans.{
   Cross,
   RightOuter
 }
+import org.mimirdb.spark.planLogic.allocateFreshAttributes
 
 /**
  * A class for enumerating caveats applied to a specified plan.
@@ -155,7 +157,7 @@ object EnumeratePlanCaveats
 
         val childCaveats = recurPlan(
           row = row.map { e => inline(e, projectList) },
-          attributes = childDependenciesByField,
+          attributes = childDependenciesByField.toMap,
           sort = sort,
           plan = child
         )
@@ -260,7 +262,7 @@ object EnumeratePlanCaveats
         val childCaveats = recurPlan(
           row = Some(row.map { e => foldAnd(e, condition) }
                         .getOrElse { condition }),
-          attributes = fieldDependenciesToPropagate.mapValues { foldAnd(_, condition) },
+          attributes = fieldDependenciesToPropagate.mapValues { foldAnd(_, condition) }.toMap,
           sort = sort,
           plan = child
         )
@@ -269,7 +271,7 @@ object EnumeratePlanCaveats
       }
 
       /*********************************************************/
-      case Union(children) =>
+      case Union(children, byName, allowMissingCol) =>
       {
         return children.flatMap { child =>
           recurPlan(
@@ -353,17 +355,25 @@ object EnumeratePlanCaveats
         // Here, variables in Q1 are not available for expr.  As a result, Exists tests
         // of this sort need to be unnested.  That's what the following function does.
         def foldExistentials(slice: Seq[Expression], plan: LogicalPlan): Expression =
+        {
+          // Attributes in `plan` are going to get folded into the exists condition, in
+          // which case they shouldn't be considered as part of the children.
           foldAnd(
             slice.map { 
-              case Exists(subPlan, children, exprId) => 
-                Exists(
+              case Exists(Filter(condition, subPlan), children, exprId, joinCond) => 
+                buildExists(
                   Join(plan, subPlan, Cross, None, JoinHint.NONE),
-                  children
+                  condition,
+                  exprId
                 )
               case sliceElement => 
-                Exists(plan, Seq(sliceElement))
+                buildExists(
+                  plan,
+                  sliceElement
+                )
             }:_*
           )
+        }
 
         def fixUnsafeSlice(unsafeSlicePredicate: Either[Seq[Expression],Seq[Expression]], safeSlicePredicate: Expression): Expression = 
           foldAnd(
@@ -710,9 +720,10 @@ object EnumeratePlanCaveats
   ): Map[ExprId, Expression] =
   {
     logger.trace(s"Merge Vertical Slices: $deps")
-    val ret = 
+    val ret:Map[ExprId, Expression] = 
       deps.groupBy(_._1)
           .mapValues { deps => foldOr(deps.map { _._2 }.toSeq:_*) }
+          .toMap
     logger.trace(s"... returning : $ret")
     return ret
   }

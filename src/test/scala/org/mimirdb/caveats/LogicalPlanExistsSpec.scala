@@ -181,7 +181,8 @@ class LogicalPlanExistsSpec
 
   "support selection with caveats" >> {
     annotate(
-      dfr.filter { ($"A" === 1).caveat("Is this right?") }
+      dfr.filter { ($"A" === 1).caveat("Is this right?") },
+      // trace = true
     ) { result =>
       result.map { _._1 } must be equalTo(Seq(true, true, true, true))
       result.map { _._2("A") } must be equalTo(Seq(false, false, false, false))
@@ -209,7 +210,8 @@ class LogicalPlanExistsSpec
           .otherwise($"C").as("C")
       ).groupBy("A")
        .agg( sum($"C").as("C") )
-       .sort($"A")
+       .sort($"A"),
+      // trace = true
     ) { result =>
       result.map { _._1 } must be equalTo(Seq(false, false, false))
       result.map { _._2("A") } must be equalTo(Seq(false, false, false))
@@ -323,7 +325,8 @@ class LogicalPlanExistsSpec
     )
 
     annotate(
-      base
+      base,
+      // trace = true
     ) { result =>
       result.size must beGreaterThan(1)
       val (row, fields) = result(0)
@@ -346,12 +349,13 @@ class LogicalPlanExistsSpec
     annotate(
       dfr.select(  $"A".caveatIf("HI!", $"A" === 2 ).as("A"), $"B" )
         .sort( $"A" )
-        .limit(5)
+        .limit(6),
+      // trace = true
     ) { result =>
       // These are just the baseline annotations as a sanity check.  If these are wrong,
       // then the limit on r.csv is returning a different subset of records than expected
-      result.map { _._2("A") } must be equalTo(Seq(false, false, false, false, true))
-      result.map { _._2("B") } must be equalTo(Seq(false, false, false, false, false))
+      result.map { _._2("A") } must be equalTo(Seq(false, false, false, false, true, true))
+      result.map { _._2("B") } must be equalTo(Seq(false, false, false, false, false, false))
 
       // We expect that the row annotations should contain at least one true.  Technically
       // all of the one records (the first four rows) can be safely marked false, but the

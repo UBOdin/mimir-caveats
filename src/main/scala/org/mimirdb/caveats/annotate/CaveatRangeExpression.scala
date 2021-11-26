@@ -186,18 +186,18 @@ object CaveatRangeExpression
       case op:GreaterThan => liftOrderComparison(op,groupByAttrPairs,trace)
 
       // Arithemic
-      case Add(left,right) => liftPointwise(expr,groupByAttrPairs,trace)
+      case Add(left,right,failOnError) => liftPointwise(expr,groupByAttrPairs,trace)
 
-      case Subtract(left,right) => {
+      case Subtract(left,right,failOnError) => {
         val l = apply(left,groupByAttrPairs,trace)
         val r = apply(right,groupByAttrPairs,trace)
 
-        RangeBoundedExpr(Subtract(l.lb,r.ub),expr,Subtract(l.ub,r.lb))
+        RangeBoundedExpr(Subtract(l.lb,r.ub,failOnError),expr,Subtract(l.ub,r.lb,failOnError))
       }
 
-      case Multiply(left,right) => minMaxAcrossAllCombinations(Multiply(left,right))
+      case Multiply(left,right,failOnError) => minMaxAcrossAllCombinations(Multiply(left,right,failOnError))
 
-      case Divide(left,right) =>  minMaxAcrossAllCombinations(Divide(left,right))
+      case Divide(left,right,failOnError) =>  minMaxAcrossAllCombinations(Divide(left,right,failOnError))
 
       // conditional operators
       case If(predicate, thenClause, elseClause) =>
@@ -280,8 +280,8 @@ object CaveatRangeExpression
             )
 
           aggregateFunction match {
-            case Average(e) => {
-                rewriteOneAgg(Sum(e)).applyToPairs(
+            case Average(e,failOnError) => {
+                rewriteOneAgg(Sum(e,failOnError)).applyToPairs(
                   rewriteOneAgg(Count(Literal(1))),
                   {
                     (x:Expression,y:Expression) =>
@@ -334,9 +334,8 @@ object CaveatRangeExpression
               // calculate semimodule results for the input and pass on neutral value of the aggregation function
               val aggbounds: (RangeBoundedExpr[Expression],Literal) = agg match
                 {
-                  case Sum(e) =>
+                  case s@Sum(e,failOnError) =>
                   {
-                    val s:Sum = agg.asInstanceOf[Sum]
                     (
                       apply(e,groupByAttrPairs,trace).applyIndividuallyToBounds(
                         x => Multiply(x.lb,CaseWhen(Seq((LessThan(x.lb,Literal(0)),r.ub)),r.lb)),
@@ -369,7 +368,7 @@ object CaveatRangeExpression
                   ub => CaseWhen(Seq((certainGrpMember,ub)),Greatest(Seq(aggbounds._2,ub)))
                 ).map{ x =>
                   agg match {
-                    case Sum(e) => Sum(x)
+                    case Sum(e,failOnError) => Sum(x,failOnError)
                     case Min(e) => Min(x)
                     case Max(e) => Max(x)
                   }
@@ -388,6 +387,7 @@ object CaveatRangeExpression
         dataType,
         children,
         inputEncoders,
+        outputEncoder,
         udfName,
         nullable,
         udfDeterministic)  =>
@@ -550,6 +550,8 @@ object CaveatRangeExpression
           )
         )
       }
+      case CaseWhen(x: Seq[_], Some(_)) => ???
+      case CaseWhen(x: Seq[_], None) => ???
     }
 
   // calculate bounds as the min/max over all combinations of applying the
