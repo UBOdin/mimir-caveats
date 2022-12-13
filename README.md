@@ -10,6 +10,20 @@ values that might need to be changed in the future.  For example:
   decisions based on a dataset.
 * **Outliers**: Use caveats to keep track of outliers that may need to be
   handled differently depending on what questions you're asking.
+  
+## Installing
+
+Add `https://maven.mimirdb.org/` as a Maven resolver and then...
+
+With SBT, add the following dependency
+```
+libraryDependencies += "org.mimirdb" %% "mimir-caveats" % "0.3.6"
+```
+
+With Mill, add the following dependency
+```
+ivy"org.mimirdb::mimir-caveats::0.3.6"
+```
 
 ## Caveats
 Use the `caveat` `Column` implicit to mark a value.  In the following example,
