@@ -280,6 +280,11 @@ class CaveatRangePlan()
 
       case Union(children: Seq[LogicalPlan], byName, allowMissingCol) =>
       {
+        ???
+
+        // the following implementation is *wrong*.  We need to ensure
+        // that the exprIds of the variables in each branch line up...
+        // and that doesn't happen for now.
         val rewrittenChildren = children.map(tapply)
         logrewr("UNION")
         val res = Union(rewrittenChildren, byName, allowMissingCol) //TODO should be fine?

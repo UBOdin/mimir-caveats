@@ -1,7 +1,7 @@
 name := "mimir-caveats"
-version := "0.3.5"
+version := "0.3.6"
 organization := "org.mimirdb"
-scalaVersion := "2.13.7"
+scalaVersion := "2.12.15"
 
 // Make the UX work in SBT
 fork := true
@@ -37,10 +37,10 @@ libraryDependencies ++= Seq(
   "org.specs2"                    %%  "specs2-junit"             % "4.8.2" % "test",
 
   // Spark
-  "org.apache.spark"              %%  "spark-sql"                % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
-  "org.apache.spark"              %%  "spark-mllib"              % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
-  "org.apache.spark"              %%  "spark-hive"               % "3.2.0" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
-  "org.apache.hadoop"             %   "hadoop-client"            % "3.3.1" excludeAll(
+  "org.apache.spark"              %%  "spark-sql"                % "3.3.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-mllib"              % "3.3.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.spark"              %%  "spark-hive"               % "3.3.1" excludeAll(ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12"), ExclusionRule("org.apache.hadoop")),
+  "org.apache.hadoop"             %   "hadoop-client"            % "3.3.4" excludeAll(
                                                                               ExclusionRule(organization ="org.slf4j", name = "slf4j-log4j12"), 
                                                                               ExclusionRule("com.fasterxml.jackson.core"), 
                                                                             ),

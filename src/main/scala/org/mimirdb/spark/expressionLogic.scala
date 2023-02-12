@@ -87,7 +87,7 @@ object expressionLogic
     if(e.references.isEmpty){ Literal(e.eval(), e.dataType) }
     else { 
       e.mapChildren { 
-        case r:RuntimeReplaceable => simplify(r.child)
+        case r:RuntimeReplaceable => simplify(r.replacement)
         case x => simplify(x) 
       } 
     }
@@ -112,7 +112,7 @@ object expressionLogic
       // up creating expression trees that make no sense when printed.  In the
       // interest of making debugging easier, just flatten out the expression
       // here and now.  
-      case r:RuntimeReplaceable => inline(r.child, replacements)
+      case r:RuntimeReplaceable => inline(r.replacement, replacements)
 
       // Exists is... odd.  If we need to inline into an Exists expression
       // we need to replace all of the expression references in the subquery
